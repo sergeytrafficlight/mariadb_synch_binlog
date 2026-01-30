@@ -5,8 +5,9 @@ import os
 import signal
 from tests.conftest import start_engine
 from config.config_test import MYSQL_SETTINGS_ACTOR, APP_SETTINGS
+from plugins_test.plugin_test import statistic
 
-def generate_load(db_name):
+def generate_load(db_name, count):
     mysql_settings = MYSQL_SETTINGS_ACTOR
     mysql_settings['database'] = APP_SETTINGS['db_name']
     conn = pymysql.connect(
@@ -14,8 +15,7 @@ def generate_load(db_name):
     )
     cursor = conn.cursor()
 
-    for i in range(10):
-        print(f"make insert")
+    for i in range(count):
         cursor.execute(
             "INSERT INTO items (name, value) VALUES (%s, %s)",
             (f"name{i}", i),
@@ -29,21 +29,30 @@ def generate_load(db_name):
 
 def test_engine_pipeline(test_db):
 
+    load_count = 1000
+
     db_name = test_db
 
     engine_thread = start_engine()
 
-    #time.sleep(2)
+    generate_load(db_name, load_count)
 
-    generate_load(db_name)
-
-    # дать бинлогу доехать
     time.sleep(2)
 
-    # стопаем engine
-    print(f"sent sigint")
     os.kill(os.getpid(), signal.SIGINT)
     engine_thread.join(timeout=5)
 
     assert not engine_thread.is_alive()
+
+    global statistic
+
+    assert statistic.process_event_insert == load_count
+    assert statistic.process_event_update == load_count
+    assert statistic.process_event_delete == load_count / 2
+    assert statistic.initiate_synch_mode == 1
+    assert statistic.tear_down == 1
+    assert statistic.initiate_full_regeneration == 1
+    assert statistic.finished_full_regeneration == 1
+
+
 

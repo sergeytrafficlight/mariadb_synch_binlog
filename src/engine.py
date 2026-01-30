@@ -5,13 +5,15 @@ import pymysql
 import logging
 import socket
 import threading
+import importlib
 from pymysqlreplication import BinLogStreamReader
 from pymysqlreplication.row_event import WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent
 from pymysqlreplication.event import MariadbGtidEvent, XidEvent
-from src.tools import get_gtid
+from src.tools import get_gtid, plugin_wrapper
 
 logging.getLogger("pymysqlreplication").setLevel(logging.ERROR)
 
+user_func = None
 STOP = False
 last_sigint = 0
 FORCE_EXIT_WINDOW = 1.5
@@ -33,7 +35,7 @@ FORBIDDEN = {
 
 
 def handle_stop(signum, frame):
-    global STOP, last_sigint
+    global STOP, last_sigint, user_func
     print(f"got sigint")
 
     now = time.time()
@@ -45,6 +47,7 @@ def handle_stop(signum, frame):
 
     last_sigint = now
     STOP = True
+    user_func.tear_down()
 
     print("\n🛑 Graceful shutdown requested (press Ctrl+C again to force)")
 
@@ -157,6 +160,10 @@ def preflight_check(cursor, mysql_settings, app_settings):
         check_tables(cursor, app_settings['db_name'], app_settings['scan_tables'])
 
 def start_binlog_consumer(mysql_settings, app_settings):
+    global user_func
+
+
+    user_func.initiate_synch_mode()
 
     binlog_stream = BinLogStreamReader(
         connection_settings=mysql_settings,
@@ -179,21 +186,21 @@ def start_binlog_consumer(mysql_settings, app_settings):
                     print(f"▶ GTID START: {event.gtid}")
                     continue
 
+                if isinstance(event, XidEvent):
+                    print("✔ TX COMMIT")
+                    continue
+
                 schema = event.schema
                 table = event.table
                 for row in event.rows:
 
                     if isinstance(event, WriteRowsEvent):
-                        print(f"[INSERT] {schema}.{table}: {row['values']}")
+                        user_func.process_event('insert', schema, table, row)
                     elif isinstance(event, UpdateRowsEvent):
-                        print(f"[UPDATE] {schema}.{table}: before={row['before_values']} after={row['after_values']}")
+                        user_func.process_event('update', schema, table, row)
                     elif isinstance(event, DeleteRowsEvent):
-                        print(f"[DELETE] {schema}.{table}: {row['values']}")
+                        user_func.process_event('delete', schema, table, row)
 
-
-                if isinstance(event, XidEvent):
-                    print("✔ TX COMMIT")
-                    continue
 
             time.sleep(0.2)
 
@@ -229,8 +236,17 @@ def health_server(socket_path):
             os.remove(socket_path)
         print("🔴 Health server stopped")
 
+def full_regeneration(cursor, mysql_settings, app_settings):
+
+    user_func.initiate_full_regeneration()
+
+    user_func.finished_full_regeneration()
+
 def run():
     from config.config import MYSQL_SETTINGS, APP_SETTINGS
+    global user_func
+
+    user_func = plugin_wrapper(APP_SETTINGS['handle_events_plugin'])
 
     health_thread = None
     conn = None
@@ -243,8 +259,7 @@ def run():
         gtid = get_gtid(APP_SETTINGS['gtid_file'])
 
         if not gtid:
-            #upload database
-            pass
+            full_regeneration(cursor, MYSQL_SETTINGS, APP_SETTINGS)
 
         health_thread = threading.Thread(target=health_server, daemon=True, args=(APP_SETTINGS['health_socket'], ))
         health_thread.start()
