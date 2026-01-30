@@ -9,7 +9,7 @@ import importlib
 from pymysqlreplication import BinLogStreamReader
 from pymysqlreplication.row_event import WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent
 from pymysqlreplication.event import MariadbGtidEvent, XidEvent
-from src.tools import get_gtid, plugin_wrapper
+from src.tools import get_gtid, plugin_wrapper, regeneration_threads_controller
 
 logging.getLogger("pymysqlreplication").setLevel(logging.ERROR)
 
@@ -36,8 +36,6 @@ FORBIDDEN = {
 
 def handle_stop(signum, frame):
     global STOP, last_sigint, user_func
-    print(f"got sigint")
-
     now = time.time()
 
     # второй Ctrl+C подряд
@@ -75,7 +73,7 @@ def preflight_check(cursor, mysql_settings, app_settings):
     def check_variables(cursor):
         cursor.execute("""
             SHOW GLOBAL VARIABLES WHERE Variable_name IN
-            ('log_bin','binlog_format', 'binlog_row_metadata', 'binlog_row_image','server_id', 'binlog_gtid_index')
+            ('log_bin','binlog_format', 'binlog_row_metadata', 'binlog_row_image','server_id', 'binlog_gtid_index', 'gtid_strict_mode')
         """)
         vars = {k.lower(): v for k, v in cursor.fetchall()}
 
@@ -93,6 +91,9 @@ def preflight_check(cursor, mysql_settings, app_settings):
 
         if vars.get("binlog_gtid_index") != "ON":
             errors.append(f"binlog_gtid_index {vars.get('binlog_gtid_index')} != ON")
+
+        if vars.get("gtid_strict_mode") != "ON":
+            errors.append(f"gtid_strict_mode {vars.get('gtid_strict_mode')} != ON")
 
         if vars.get("binlog_row_metadata") != "FULL":
             errors.append(f"binlog_row_metadata {vars.get('binlog_row_metadata')} != FULL")
@@ -195,7 +196,7 @@ def start_binlog_consumer(mysql_settings, app_settings):
                 for row in event.rows:
 
                     if isinstance(event, WriteRowsEvent):
-                        user_func.process_event('insert', schema, table, row)
+                        user_func.process_event('insert', schema, table, row['values'])
                     elif isinstance(event, UpdateRowsEvent):
                         user_func.process_event('update', schema, table, row)
                     elif isinstance(event, DeleteRowsEvent):
@@ -236,9 +237,56 @@ def health_server(socket_path):
             os.remove(socket_path)
         print("🔴 Health server stopped")
 
+
+def full_regeneration_thread(mysql_settings, app_settings, controller):
+
+    db_name = app_settings['db_name']
+    table_name = app_settings['init_table']
+    full_regeneration_batch_len = int(app_settings['full_regeneration_batch_len'])
+
+    conn = pymysql.connect(**mysql_settings)
+    cursor = conn.cursor(pymysql.cursors.DictCursor)
+    cursor.execute("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ;")
+    cursor.execute("START TRANSACTION WITH CONSISTENT SNAPSHOT;")
+
+    while True:
+        current_id = controller.get_and_update_id(full_regeneration_batch_len)
+
+        q = f"SELECT * FROM {db_name}.{table_name} WHERE id >= {current_id} and id < {current_id + full_regeneration_batch_len};"
+        cursor.execute(q)
+        result = cursor.fetchall()
+        count = len(result)
+        if not count:
+            break
+        for r in result:
+            user_func.process_event('insert', db_name, table_name, r)
+
+    conn.close()
+
+
+
 def full_regeneration(cursor, mysql_settings, app_settings):
 
     user_func.initiate_full_regeneration()
+
+    controller = regeneration_threads_controller()
+
+    init_table = app_settings['init_table']
+
+    cursor.execute("SHOW MASTER STATUS;")
+    r = cursor.fetchall()
+    start_file = r[0][0]
+    start_pos = r[0][1]
+
+    threads = []
+
+    for i in range(app_settings['full_regeneration_threads_count']):
+        t = threading.Thread(target=full_regeneration_thread, args=(mysql_settings, app_settings, controller))
+        t.start()
+        threads.append(t)
+
+    for t in threads:
+        t.join()
 
     user_func.finished_full_regeneration()
 

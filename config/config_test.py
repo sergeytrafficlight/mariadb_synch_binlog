@@ -16,10 +16,11 @@ APP_SETTINGS = {
     'db_name': 'mariadb_synch_binlog_tmp_test',
     #init table - this table will scan as initital creating data
     'init_table': 'items',
+    'full_regeneration_threads_count': 20,
+    'full_regeneration_batch_len': 10,
     #sync next tables, while parsing binlog
     'scan_tables': ['items','items2'],
     'health_socket': './common/health.sock',
     'gtid_file': './common/gtid.txt',
-
     'handle_events_plugin': 'plugins_test.plugin_test'
 }

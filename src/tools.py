@@ -1,6 +1,7 @@
 import os
 import re
 import importlib
+import threading
 
 def get_gtid(file_path):
     if not os.path.exists(file_path):
@@ -36,8 +37,15 @@ class plugin_wrapper:
         self.tear_down = getattr(module, 'tear_down')
         self.process_event = getattr(module, 'process_event')
 
-
-class status_class:
+class regeneration_threads_controller:
 
     def __init__(self):
-        self.stage
+        self.current_id = 0
+        self.lock = threading.Lock()
+
+    def get_and_update_id(self, count):
+        result = None
+        with self.lock:
+            result = self.current_id
+            self.current_id += count
+        return result

@@ -43,6 +43,7 @@ def process_event(event_type, schema, table, event):
     global statistic
     if event_type == 'insert':
         statistic.process_event_insert +=1
+        print(event)
     elif event_type == 'update':
         statistic.process_event_update += 1
     elif event_type == 'delete':

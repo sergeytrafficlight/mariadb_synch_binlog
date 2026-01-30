@@ -14,6 +14,7 @@ def test_preflight_ok(fake_cursor):
             ("binlog_row_metadata", "FULL"),
             ("server_id", "1"),
             ("binlog_gtid_index", "ON"),
+            ("gtid_strict_mode", "ON"),
         ],
     ]
 
@@ -54,6 +55,7 @@ def test_probe_binlog_ok(mock_stream, fake_cursor):
             ("binlog_row_metadata", "FULL"),
             ("server_id", "1"),
             ("binlog_gtid_index", "ON"),
+            ("gtid_strict_mode", "ON"),
         ],
     ]
 
