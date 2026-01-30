@@ -9,7 +9,7 @@ import importlib
 from pymysqlreplication import BinLogStreamReader
 from pymysqlreplication.row_event import WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent
 from pymysqlreplication.event import MariadbGtidEvent, XidEvent
-from src.tools import get_gtid, plugin_wrapper, regeneration_threads_controller
+from src.tools import binlog_file, plugin_wrapper, regeneration_threads_controller
 
 logging.getLogger("pymysqlreplication").setLevel(logging.ERROR)
 
@@ -160,11 +160,13 @@ def preflight_check(cursor, mysql_settings, app_settings):
     if len(app_settings.get('scan_tables', [])):
         check_tables(cursor, app_settings['db_name'], app_settings['scan_tables'])
 
-def start_binlog_consumer(mysql_settings, app_settings):
+def start_binlog_consumer(mysql_settings, app_settings, binlog):
     global user_func
 
 
     user_func.initiate_synch_mode()
+
+    print(f"start from {binlog.file} | {binlog.pos}")
 
     binlog_stream = BinLogStreamReader(
         connection_settings=mysql_settings,
@@ -175,6 +177,8 @@ def start_binlog_consumer(mysql_settings, app_settings):
         only_schemas=[app_settings['db_name']],
         only_tables=app_settings['scan_tables'],
         freeze_schema=True,        # не модифицируем schema
+        log_file=binlog.file,
+        log_pos=binlog.pos,
     )
 
     print(f"🚀 Binlog consumer started. Symch with [{app_settings['db_name']}] . Waiting for events...")
@@ -184,11 +188,11 @@ def start_binlog_consumer(mysql_settings, app_settings):
             for event in binlog_stream:
 
                 if isinstance(event, MariadbGtidEvent):
-                    print(f"▶ GTID START: {event.gtid}")
+                    #print(f"▶ GTID START: {event.gtid}")
                     continue
 
                 if isinstance(event, XidEvent):
-                    print("✔ TX COMMIT")
+                    #print("✔ TX COMMIT")
                     continue
 
                 schema = event.schema
@@ -201,6 +205,10 @@ def start_binlog_consumer(mysql_settings, app_settings):
                         user_func.process_event('update', schema, table, row)
                     elif isinstance(event, DeleteRowsEvent):
                         user_func.process_event('delete', schema, table, row)
+
+                binlog.file = event.packet.log_file
+                binlog.pos = event.packet.log_pos
+                assert binlog.save()
 
 
             time.sleep(0.2)
@@ -265,7 +273,7 @@ def full_regeneration_thread(mysql_settings, app_settings, controller):
 
 
 
-def full_regeneration(cursor, mysql_settings, app_settings):
+def full_regeneration(cursor, mysql_settings, app_settings, binlog):
 
     user_func.initiate_full_regeneration()
 
@@ -275,8 +283,10 @@ def full_regeneration(cursor, mysql_settings, app_settings):
 
     cursor.execute("SHOW MASTER STATUS;")
     r = cursor.fetchall()
-    start_file = r[0][0]
-    start_pos = r[0][1]
+    binlog.file = r[0][0]
+    binlog.pos = r[0][1]
+
+    assert binlog.save()
 
     threads = []
 
@@ -304,15 +314,15 @@ def run():
 
         preflight_check(cursor, MYSQL_SETTINGS, APP_SETTINGS)
 
-        gtid = get_gtid(APP_SETTINGS['gtid_file'])
+        binlog = binlog_file(APP_SETTINGS['binlog_file'])
 
-        if not gtid:
-            full_regeneration(cursor, MYSQL_SETTINGS, APP_SETTINGS)
+        if not binlog.load():
+            full_regeneration(cursor, MYSQL_SETTINGS, APP_SETTINGS, binlog)
 
         health_thread = threading.Thread(target=health_server, daemon=True, args=(APP_SETTINGS['health_socket'], ))
         health_thread.start()
 
-        start_binlog_consumer(MYSQL_SETTINGS, APP_SETTINGS)
+        start_binlog_consumer(MYSQL_SETTINGS, APP_SETTINGS, binlog)
 
     finally:
         if conn:

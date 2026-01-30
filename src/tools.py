@@ -1,29 +1,49 @@
 import os
 import re
+import json
 import importlib
 import threading
 
-def get_gtid(file_path):
-    if not os.path.exists(file_path):
-        return None
-    gtid_str = open(file_path).read().strip()
 
-    parts = gtid_str.split(",")
-    for part in parts:
-        if ":" not in part:
-            raise RuntimeError(f"⚠ Invalid GTID component (no colon): {part}")
-        uuid, txn_id = part.split(":", 1)
-        # Проверяем UUID длину и формат (8-4-4-4-12)
-        uuid_parts = uuid.split("-")
-        if len(uuid_parts) != 5 or \
-           [len(p) for p in uuid_parts] != [8,4,4,4,12]:
-            raise RuntimeError(f"⚠ Invalid UUID format: {uuid}")
-            return None
-        # Проверяем, что txn_id — это число
-        if not txn_id.isdigit():
-            raise RuntimeError(f"⚠ Transaction ID is not a number: {txn_id}")
+class binlog_file:
 
-    return gtid_str
+    def __init__(self, file_path):
+        self.file = None
+        self.pos = None
+        self.file_path = file_path
+
+    def load(self):
+        if not os.path.exists(self.file_path):
+            return False
+        try:
+            with open(self.file_path, "r") as f:
+                data = json.load(f)
+                self.file = data.get("log_file")
+                self.pos = data.get("log_pos")
+            # проверка, что данные валидные
+            if not isinstance(self.file, str) or not isinstance(self.pos, int):
+                return False
+            return True
+        except (json.JSONDecodeError, IOError, ValueError):
+            return False
+
+    def save(self):
+        """Сохраняет текущий offset в JSON (атомарно через tmp-файл)."""
+        tmp_file = self.file_path + ".tmp"
+        data = {
+            "log_file": self.file,
+            "log_pos": self.pos
+        }
+        try:
+            with open(tmp_file, "w") as f:
+                json.dump(data, f)
+            # атомарная замена
+            os.replace(tmp_file, self.file_path)
+        except IOError as e:
+            print(f"Ошибка сохранения binlog offset: {e}")
+            return False
+        return True
+
 
 
 class plugin_wrapper:

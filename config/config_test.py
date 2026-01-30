@@ -21,6 +21,6 @@ APP_SETTINGS = {
     #sync next tables, while parsing binlog
     'scan_tables': ['items','items2'],
     'health_socket': './common/health.sock',
-    'gtid_file': './common/gtid.txt',
+    'binlog_file': './common/binlog.pos',
     'handle_events_plugin': 'plugins_test.plugin_test'
 }
