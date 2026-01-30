@@ -40,21 +40,27 @@ def test_db():
         )
     """)
 
+    cursor.execute("""
+            CREATE TABLE items2 (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                name VARCHAR(64),
+                value INT
+            )
+        """)
+
     yield db_name
 
     cursor.execute(f"DROP DATABASE IF EXISTS {db_name}")
     conn.close()
 
 def start_engine():
-    stop_event = threading.Event()
 
     thread = threading.Thread(
         target=run,
-        kwargs={"stop_event": stop_event},
         daemon=True,
     )
 
     thread.start()
     time.sleep(1)  # дать подняться бинлог-стримеру
 
-    return stop_event, thread
+    return thread

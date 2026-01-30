@@ -1,6 +1,8 @@
 import pytest
 import pymysql
 import time
+import os
+import signal
 from tests.conftest import start_engine
 from config.config_test import MYSQL_SETTINGS_ACTOR, APP_SETTINGS
 
@@ -13,7 +15,7 @@ def generate_load(db_name):
     cursor = conn.cursor()
 
     for i in range(10):
-        print(f"generate insert")
+        print(f"make insert")
         cursor.execute(
             "INSERT INTO items (name, value) VALUES (%s, %s)",
             (f"name{i}", i),
@@ -29,9 +31,9 @@ def test_engine_pipeline(test_db):
 
     db_name = test_db
 
-    stop_event, engine_thread = start_engine()
+    engine_thread = start_engine()
 
-    time.sleep(2)
+    #time.sleep(2)
 
     generate_load(db_name)
 
@@ -39,7 +41,8 @@ def test_engine_pipeline(test_db):
     time.sleep(2)
 
     # стопаем engine
-    stop_event.set()
+    print(f"sent sigint")
+    os.kill(os.getpid(), signal.SIGINT)
     engine_thread.join(timeout=5)
 
     assert not engine_thread.is_alive()

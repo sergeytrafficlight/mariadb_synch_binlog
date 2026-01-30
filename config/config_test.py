@@ -14,4 +14,12 @@ MYSQL_SETTINGS_ACTOR = {
 
 APP_SETTINGS = {
     'db_name': 'mariadb_synch_binlog_tmp_test',
+    #init table - this table will scan as initital creating data
+    'init_table': 'items',
+    #sync next tables, while parsing binlog
+    'scan_tables': ['items','items2'],
+    'health_socket': './common/health.sock',
+    'gtid_file': './common/gtid.txt',
+
+    'handle_events_plugin': 'plugins_test.plugin_test'
 }

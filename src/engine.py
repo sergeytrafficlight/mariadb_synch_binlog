@@ -3,16 +3,18 @@ import os
 import time
 import pymysql
 import logging
+import socket
+import threading
 from pymysqlreplication import BinLogStreamReader
 from pymysqlreplication.row_event import WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent
+from pymysqlreplication.event import MariadbGtidEvent, XidEvent
+from src.tools import get_gtid
 
 logging.getLogger("pymysqlreplication").setLevel(logging.ERROR)
 
 STOP = False
 last_sigint = 0
 FORCE_EXIT_WINDOW = 1.5
-
-
 
 REQUIRED = {
     "REPLICATION SLAVE",
@@ -32,6 +34,7 @@ FORBIDDEN = {
 
 def handle_stop(signum, frame):
     global STOP, last_sigint
+    print(f"got sigint")
 
     now = time.time()
 
@@ -42,12 +45,13 @@ def handle_stop(signum, frame):
 
     last_sigint = now
     STOP = True
+
     print("\n🛑 Graceful shutdown requested (press Ctrl+C again to force)")
 
 signal.signal(signal.SIGINT, handle_stop)   # Ctrl+C
 signal.signal(signal.SIGTERM, handle_stop)
 
-def preflight_check(cursor, mysql_settings):
+def preflight_check(cursor, mysql_settings, app_settings):
     def check_grants(cursor):
         cursor.execute("SHOW GRANTS FOR CURRENT_USER")
         grants = [row[0] for row in cursor.fetchall()]
@@ -67,12 +71,13 @@ def preflight_check(cursor, mysql_settings):
 
     def check_variables(cursor):
         cursor.execute("""
-            SHOW VARIABLES WHERE Variable_name IN
-            ('log_bin','binlog_format','binlog_row_image','server_id')
+            SHOW GLOBAL VARIABLES WHERE Variable_name IN
+            ('log_bin','binlog_format', 'binlog_row_metadata', 'binlog_row_image','server_id', 'binlog_gtid_index')
         """)
         vars = {k.lower(): v for k, v in cursor.fetchall()}
 
         errors = []
+
 
         if vars.get("log_bin") != "ON":
             errors.append("log_bin is OFF")
@@ -82,6 +87,12 @@ def preflight_check(cursor, mysql_settings):
 
         if vars.get("binlog_row_image") != "FULL":
             errors.append("binlog_row_image != FULL")
+
+        if vars.get("binlog_gtid_index") != "ON":
+            errors.append(f"binlog_gtid_index {vars.get('binlog_gtid_index')} != ON")
+
+        if vars.get("binlog_row_metadata") != "FULL":
+            errors.append(f"binlog_row_metadata {vars.get('binlog_row_metadata')} != FULL")
 
         if int(vars.get("server_id", 0)) <= 0:
             errors.append("server_id not set")
@@ -107,6 +118,7 @@ def preflight_check(cursor, mysql_settings):
             blocking=False,  # не ждём события
             resume_stream=False,  # не сохраняем позицию
             freeze_schema=True,
+            #auto_position=True,
         )
 
         try:
@@ -120,59 +132,127 @@ def preflight_check(cursor, mysql_settings):
         finally:
             stream.close()
 
+    def check_tables(cursor, db_name, tables):
+
+        cursor.execute(f"SHOW TABLES FROM {db_name};")
+
+        r = cursor.fetchall()
+        existing_tables = []
+        for t in r:
+            existing_tables.append(t[0])
+
+        errors = []
+        for t in tables:
+            if t not in existing_tables:
+                errors.append(t)
+
+        if len(errors):
+            raise RuntimeError(f"Can't find tables: {errors}")
+
     check_grants(cursor)
     check_variables(cursor)
     assert_readonly(cursor)
     probe_binlog(mysql_settings)
+    if len(app_settings.get('scan_tables', [])):
+        check_tables(cursor, app_settings['db_name'], app_settings['scan_tables'])
 
-def start_binlog_consumer(mysql_settings, app_settings, stop_event):
-    """
-    Вечный loop, читаем события из бинлога MariaDB.
-    """
-    stream = BinLogStreamReader(
+def start_binlog_consumer(mysql_settings, app_settings):
+
+    binlog_stream = BinLogStreamReader(
         connection_settings=mysql_settings,
         server_id=100001,          # уникальный server_id для consumer
         blocking=False,             # ждём новые события
         resume_stream=True,        # продолжим с последней позиции, если указана
-        only_events=[WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent],
+        only_events=[WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent, MariadbGtidEvent, XidEvent],
         only_schemas=[app_settings['db_name']],
+        only_tables=app_settings['scan_tables'],
         freeze_schema=True,        # не модифицируем schema
     )
 
     print(f"🚀 Binlog consumer started. Symch with [{app_settings['db_name']}] . Waiting for events...")
 
     try:
-        while not (STOP or (stop_event and stop_event.is_set())):
-            # вытаскиваем события, если есть
-            try:
-                event = next(iter(stream))
-            except StopIteration:
-                time.sleep(0.1)  # пауза, чтобы не жрать CPU
-                continue
+        while not STOP:
+            for event in binlog_stream:
 
-            schema = event.schema
-            table = event.table
-            for row in event.rows:
-                if isinstance(event, WriteRowsEvent):
-                    print(f"[INSERT] {schema}.{table}: {row['values']}")
-                elif isinstance(event, UpdateRowsEvent):
-                    print(f"[UPDATE] {schema}.{table}: before={row['before_values']} after={row['after_values']}")
-                elif isinstance(event, DeleteRowsEvent):
-                    print(f"[DELETE] {schema}.{table}: {row['values']}")
+                if isinstance(event, MariadbGtidEvent):
+                    print(f"▶ GTID START: {event.gtid}")
+                    continue
+
+                schema = event.schema
+                table = event.table
+                for row in event.rows:
+
+                    if isinstance(event, WriteRowsEvent):
+                        print(f"[INSERT] {schema}.{table}: {row['values']}")
+                    elif isinstance(event, UpdateRowsEvent):
+                        print(f"[UPDATE] {schema}.{table}: before={row['before_values']} after={row['after_values']}")
+                    elif isinstance(event, DeleteRowsEvent):
+                        print(f"[DELETE] {schema}.{table}: {row['values']}")
+
+
+                if isinstance(event, XidEvent):
+                    print("✔ TX COMMIT")
+                    continue
+
+            time.sleep(0.2)
 
     finally:
-        stream.close()
+        binlog_stream.close()
 
-def run(stop_event=None):
-    from config.config import MYSQL_SETTINGS, APP_SETTINGS
+def health_server(socket_path):
+    global STOP
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
-        print(f"settings")
-        print(MYSQL_SETTINGS)
+        server.bind(socket_path)
+    except OSError:
+        os.remove(socket_path)
+        server.bind(socket_path)
+
+    server.listen(1)
+    server.settimeout(1.0)
+
+    print("🟢 Health server started")
+
+    try:
+        while not STOP:
+            try:
+                conn, _ = server.accept()
+            except socket.timeout:
+
+                continue
+            with conn:
+                conn.sendall(b"OK!\n")
+    finally:
+        server.close()
+        if os.path.exists(socket_path):
+            os.remove(socket_path)
+        print("🔴 Health server stopped")
+
+def run():
+    from config.config import MYSQL_SETTINGS, APP_SETTINGS
+
+    health_thread = None
+    conn = None
+    try:
         conn = pymysql.connect(**MYSQL_SETTINGS)
         cursor = conn.cursor()
 
-        preflight_check(cursor, MYSQL_SETTINGS)
-        start_binlog_consumer(MYSQL_SETTINGS, APP_SETTINGS, stop_event)
+        preflight_check(cursor, MYSQL_SETTINGS, APP_SETTINGS)
+
+        gtid = get_gtid(APP_SETTINGS['gtid_file'])
+
+        if not gtid:
+            #upload database
+            pass
+
+        health_thread = threading.Thread(target=health_server, daemon=True, args=(APP_SETTINGS['health_socket'], ))
+        health_thread.start()
+
+        start_binlog_consumer(MYSQL_SETTINGS, APP_SETTINGS)
 
     finally:
-        conn.close()
+        if conn:
+            conn.close()
+        if health_thread:
+            health_thread.join()
