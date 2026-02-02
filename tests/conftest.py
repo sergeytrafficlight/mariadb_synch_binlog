@@ -2,8 +2,10 @@ import pytest
 import pymysql
 import threading
 import time
+import clickhouse_connect
 from unittest.mock import MagicMock
 from config.config_test import MYSQL_SETTINGS, APP_SETTINGS, MYSQL_SETTINGS_ACTOR
+from plugins_test.plugin_test import CLICKHOUSE_SETTINGS_ACTOR
 from src.engine import run
 
 
@@ -18,8 +20,7 @@ def fake_cursor():
     cursor = MagicMock()
     return cursor
 
-@pytest.fixture(scope="function")
-def test_db():
+def create_mariadb_db():
 
     conn = pymysql.connect(
         **MYSQL_SETTINGS_ACTOR,
@@ -48,10 +49,45 @@ def test_db():
             )
         """)
 
-    yield db_name
+    return db_name
 
-    cursor.execute(f"DROP DATABASE IF EXISTS {db_name}")
-    conn.close()
+def create_clickhouse_db():
+
+    db_name = CLICKHOUSE_SETTINGS_ACTOR["database"]
+
+    client = clickhouse_connect.get_client(
+        host=CLICKHOUSE_SETTINGS_ACTOR["host"],
+        port=CLICKHOUSE_SETTINGS_ACTOR["port"],
+        username=CLICKHOUSE_SETTINGS_ACTOR["user"],
+        password=CLICKHOUSE_SETTINGS_ACTOR["password"],
+    )
+
+    client.command(f"DROP DATABASE IF EXISTS {db_name}")
+    client.command(f"CREATE DATABASE {db_name}")
+
+    client.command(f"""
+        CREATE TABLE {db_name}.items (
+            id UInt64,
+            name String,
+            value Int32
+        )
+        ENGINE = MergeTree
+        ORDER BY id
+    """)
+
+
+    client.command(f"""
+        CREATE TABLE {db_name}.items2 (
+            id UInt64,
+            name String,
+            value Int32
+        )
+        ENGINE = MergeTree
+        ORDER BY id
+    """)
+
+    return db_name
+
 
 def start_engine():
 

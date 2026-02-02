@@ -1,3 +1,23 @@
+import logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+CLICKHOUSE_SETTINGS_ACTOR = {
+    "host": "127.0.0.1",
+    "port": 8123,  # HTTP
+    "user": "binlog_actor",
+    "password": "strong_pass",
+    "database": "mariadb_synch_binlog_tmp_test",
+}
+
+if not logger.handlers:
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s:%(lineno)d  - %(message)s"
+    )
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
 
 #for pytest
 
@@ -42,6 +62,7 @@ def process_event(event_type, schema, table, event):
 
     global statistic
     if event_type == 'insert':
+        logger.debug(f"insert event {schema}.{table} event: {event}")
         statistic.process_event_insert +=1
     elif event_type == 'update':
         statistic.process_event_update += 1

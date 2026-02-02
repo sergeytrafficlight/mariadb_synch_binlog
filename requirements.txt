@@ -1,4 +1,4 @@
 pymysql
 mysql-replication
 pytest
-
+clickhouse-connect

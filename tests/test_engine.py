@@ -1,11 +1,25 @@
 import pytest
 import pymysql
+import logging
 import time
 import os
 import signal
-from tests.conftest import start_engine
+from tests.conftest import start_engine, create_mariadb_db, create_clickhouse_db
 from config.config_test import MYSQL_SETTINGS_ACTOR, APP_SETTINGS
 from plugins_test.plugin_test import statistic
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+if not logger.handlers:
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s:%(lineno)d  - %(message)s"
+    )
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
 
 def generate_init_load(db_name, count):
     mysql_settings = MYSQL_SETTINGS_ACTOR
@@ -16,9 +30,11 @@ def generate_init_load(db_name, count):
     cursor = conn.cursor()
 
     for i in range(count):
+        name=f"name_{i}-init-load"
+        logger.debug(f"insert init {name}")
         cursor.execute(
             "INSERT INTO items (name, value) VALUES (%s, %s)",
-            (f"name{i}", i),
+            (name, i),
         )
 
     conn.commit()
@@ -33,10 +49,11 @@ def generate_load(db_name, count):
     cursor = conn.cursor()
 
     for i in range(count):
-
+        name=f"name_{i}-load"
+        logger.debug(f"insert load {name}")
         cursor.execute(
             "INSERT INTO items (name, value) VALUES (%s, %s)",
-            (f"name{i}", i),
+            (name, i),
         )
 
     cursor.execute("UPDATE items SET value = value + 100")
@@ -45,11 +62,18 @@ def generate_load(db_name, count):
 
     conn.close()
 
-def test_engine_pipeline(test_db):
+def test_engine_pipeline():
 
-    loads_count = 10
 
-    db_name = test_db
+    binlog_file_path = APP_SETTINGS['binlog_file']
+    try:
+        os.remove(binlog_file_path)
+    except FileNotFoundError:
+        pass
+
+    loads_count = 2
+
+    db_name = create_mariadb_db()
 
     generate_init_load(db_name, loads_count)
     time.sleep(1)
@@ -74,6 +98,20 @@ def test_engine_pipeline(test_db):
     assert statistic.tear_down == 1
     assert statistic.initiate_full_regeneration == 1
     assert statistic.finished_full_regeneration == 1
+
+
+
+def test_engine_pipeline_advanced():
+
+    binlog_file_path = APP_SETTINGS['binlog_file']
+    try:
+        os.remove(binlog_file_path)
+    except FileNotFoundError:
+        pass
+
+    db_name = create_mariadb_db()
+    db_clickhouse = create_clickhouse_db()
+
 
 
 

@@ -13,6 +13,19 @@ from src.tools import binlog_file, plugin_wrapper, regeneration_threads_controll
 
 logging.getLogger("pymysqlreplication").setLevel(logging.ERROR)
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+if not logger.handlers:
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s:%(lineno)d  - %(message)s"
+    )
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+
 user_func = None
 STOP = False
 last_sigint = 0
@@ -187,6 +200,7 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
         while not STOP:
             for event in binlog_stream:
 
+                '''
                 if isinstance(event, MariadbGtidEvent):
                     #print(f"▶ GTID START: {event.gtid}")
                     continue
@@ -194,20 +208,21 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
                 if isinstance(event, XidEvent):
                     #print("✔ TX COMMIT")
                     continue
+                '''
+                if isinstance(event, (WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent)):
+                    schema = event.schema
+                    table = event.table
+                    for row in event.rows:
 
-                schema = event.schema
-                table = event.table
-                for row in event.rows:
+                        if isinstance(event, WriteRowsEvent):
+                            user_func.process_event('insert', schema, table, row['values'])
+                        elif isinstance(event, UpdateRowsEvent):
+                            user_func.process_event('update', schema, table, row)
+                        elif isinstance(event, DeleteRowsEvent):
+                            user_func.process_event('delete', schema, table, row)
 
-                    if isinstance(event, WriteRowsEvent):
-                        user_func.process_event('insert', schema, table, row['values'])
-                    elif isinstance(event, UpdateRowsEvent):
-                        user_func.process_event('update', schema, table, row)
-                    elif isinstance(event, DeleteRowsEvent):
-                        user_func.process_event('delete', schema, table, row)
-
-                binlog.file = event.packet.log_file
-                binlog.pos = event.packet.log_pos
+                binlog.file = binlog_stream.log_file
+                binlog.pos = binlog_stream.log_pos
                 assert binlog.save()
 
 
@@ -317,7 +332,11 @@ def run():
         binlog = binlog_file(APP_SETTINGS['binlog_file'])
 
         if not binlog.load():
+            logger.debug(f"need full regeneration")
             full_regeneration(cursor, MYSQL_SETTINGS, APP_SETTINGS, binlog)
+            logger.debug(f"regeneration - done")
+        else:
+            logger.debug(f"regenereation is not need, start from {str(binlog)}")
 
         health_thread = threading.Thread(target=health_server, daemon=True, args=(APP_SETTINGS['health_socket'], ))
         health_thread.start()

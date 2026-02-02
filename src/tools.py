@@ -12,6 +12,9 @@ class binlog_file:
         self.pos = None
         self.file_path = file_path
 
+    def __str__(self):
+        return f"file: {self.file} pos: {self.pos}"
+
     def load(self):
         if not os.path.exists(self.file_path):
             return False
