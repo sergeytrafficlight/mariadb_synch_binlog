@@ -8,7 +8,7 @@ import threading
 import importlib
 from pymysqlreplication import BinLogStreamReader
 from pymysqlreplication.row_event import WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent
-from pymysqlreplication.event import MariadbGtidEvent, XidEvent
+from pymysqlreplication.event import MariadbGtidEvent, XidEvent, QueryEvent
 from src.tools import binlog_file, plugin_wrapper, regeneration_threads_controller
 
 logging.getLogger("pymysqlreplication").setLevel(logging.ERROR)
@@ -186,7 +186,14 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
         server_id=100001,          # уникальный server_id для consumer
         blocking=False,             # ждём новые события
         resume_stream=True,        # продолжим с последней позиции, если указана
-        only_events=[WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent, MariadbGtidEvent, XidEvent],
+        only_events=[
+            WriteRowsEvent,
+            UpdateRowsEvent,
+            DeleteRowsEvent,
+            MariadbGtidEvent,
+            XidEvent,
+            QueryEvent,
+        ],
         only_schemas=[app_settings['db_name']],
         only_tables=app_settings['scan_tables'],
         freeze_schema=True,        # не модифицируем schema
@@ -197,6 +204,7 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
     print(f"🚀 Binlog consumer started. Symch with [{app_settings['db_name']}] . Waiting for events...")
 
     try:
+        in_tx = False
         while not STOP:
             for event in binlog_stream:
 
@@ -204,12 +212,19 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
                 if isinstance(event, MariadbGtidEvent):
                     #print(f"▶ GTID START: {event.gtid}")
                     continue
-
-                if isinstance(event, XidEvent):
-                    #print("✔ TX COMMIT")
-                    continue
                 '''
-                if isinstance(event, (WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent)):
+                if isinstance(event, QueryEvent):
+                    if event.query == 'BEGIN':
+                        in_tx = True
+
+                elif isinstance(event, XidEvent):
+                    in_tx = False
+                    binlog.file = binlog_stream.log_file
+                    binlog.pos = binlog_stream.log_pos
+                    logger.debug(f"save binlog {binlog}")
+                    assert binlog.save()
+
+                elif isinstance(event, (WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent)):
                     schema = event.schema
                     table = event.table
                     for row in event.rows:
@@ -221,10 +236,11 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
                         elif isinstance(event, DeleteRowsEvent):
                             user_func.process_event('delete', schema, table, row)
 
-                binlog.file = binlog_stream.log_file
-                binlog.pos = binlog_stream.log_pos
-                assert binlog.save()
-
+                    if not in_tx:
+                        binlog.file = binlog_stream.log_file
+                        binlog.pos = binlog_stream.log_pos
+                        logger.debug(f"save binlog {binlog}")
+                        assert binlog.save()
 
             time.sleep(0.2)
 

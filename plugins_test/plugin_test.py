@@ -32,6 +32,16 @@ class statistic_class:
         self.process_event_update = 0
         self.process_event_delete = 0
 
+    def clear(self):
+        self.initiate_full_regeneration = 0
+        self.finished_full_regeneration = 0
+        self.initiate_synch_mode = 0
+        self.tear_down = 0
+        self.process_event_insert = 0
+        self.process_event_update = 0
+        self.process_event_delete = 0
+
+
 statistic = statistic_class()
 
 def initiate_full_regeneration():

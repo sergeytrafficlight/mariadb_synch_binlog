@@ -38,6 +38,11 @@ def generate_init_load(db_name, count):
         )
 
     conn.commit()
+
+    cursor.execute("SHOW MASTER STATUS;")
+    r = cursor.fetchall()
+    logger.debug(f"binlog pos after insert {r}")
+
     conn.close()
 
 def generate_load(db_name, count):
@@ -60,10 +65,16 @@ def generate_load(db_name, count):
     cursor.execute("DELETE FROM items WHERE id % 2 = 0")
     conn.commit()
 
+    cursor.execute("SHOW MASTER STATUS;")
+    r = cursor.fetchall()
+    logger.debug(f"binlog pos after insert {r}")
+
     conn.close()
 
-def test_engine_pipeline():
+def _test_engine_pipeline():
 
+    global statistic
+    statistic.clear()
 
     binlog_file_path = APP_SETTINGS['binlog_file']
     try:
@@ -71,16 +82,16 @@ def test_engine_pipeline():
     except FileNotFoundError:
         pass
 
-    loads_count = 2
+    leads_count = 2
 
     db_name = create_mariadb_db()
 
-    generate_init_load(db_name, loads_count)
+    generate_init_load(db_name, leads_count)
     time.sleep(1)
 
     engine_thread = start_engine()
 
-    generate_load(db_name, loads_count)
+    generate_load(db_name, leads_count)
 
     time.sleep(2)
 
@@ -89,11 +100,11 @@ def test_engine_pipeline():
 
     assert not engine_thread.is_alive()
 
-    global statistic
 
-    assert statistic.process_event_insert == loads_count * 2
-    assert statistic.process_event_update == loads_count * 2
-    assert statistic.process_event_delete == loads_count
+
+    assert statistic.process_event_insert == leads_count * 2
+    assert statistic.process_event_update == leads_count * 2
+    assert statistic.process_event_delete == leads_count
     assert statistic.initiate_synch_mode == 1
     assert statistic.tear_down == 1
     assert statistic.initiate_full_regeneration == 1
@@ -102,6 +113,9 @@ def test_engine_pipeline():
 
 
 def test_engine_pipeline_advanced():
+
+    global statistic
+    statistic.clear()
 
     binlog_file_path = APP_SETTINGS['binlog_file']
     try:
@@ -112,6 +126,43 @@ def test_engine_pipeline_advanced():
     db_name = create_mariadb_db()
     db_clickhouse = create_clickhouse_db()
 
+    binlog_file_path = APP_SETTINGS['binlog_file']
+    try:
+        os.remove(binlog_file_path)
+    except FileNotFoundError:
+        pass
 
+    leads_count = 1
+
+    generate_init_load(db_name, leads_count)
+
+    time.sleep(1)
+
+    engine_thread = start_engine()
+
+    generate_load(db_name, leads_count)
+
+    time.sleep(2)
+
+    os.kill(os.getpid(), signal.SIGINT)
+    engine_thread.join(timeout=5)
+    assert not engine_thread.is_alive()
+
+
+    generate_load(db_name, leads_count)
+
+    engine_thread = start_engine()
+    time.sleep(2)
+    os.kill(os.getpid(), signal.SIGINT)
+    engine_thread.join(timeout=5)
+    assert not engine_thread.is_alive()
+
+    assert statistic.process_event_insert == leads_count * 2
+    assert statistic.process_event_update == leads_count * 2
+    assert statistic.process_event_delete == leads_count
+    assert statistic.initiate_synch_mode == 2
+    assert statistic.tear_down == 2
+    assert statistic.initiate_full_regeneration == 1
+    assert statistic.finished_full_regeneration == 1
 
 
