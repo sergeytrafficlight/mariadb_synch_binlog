@@ -69,10 +69,14 @@ def create_clickhouse_db():
         CREATE TABLE {db_name}.items (
             id UInt64,
             name String,
-            value Int32
+            value Int32,
+            version UInt64,
+            deleted UInt8 DEFAULT 0,
+            updated_at DateTime DEFAULT now()
         )
-        ENGINE = MergeTree
+        ENGINE = ReplacingMergeTree(version)
         ORDER BY id
+        TTL updated_at + INTERVAL 7 DAY WHERE deleted = 1;
     """)
 
 
@@ -80,11 +84,16 @@ def create_clickhouse_db():
         CREATE TABLE {db_name}.items2 (
             id UInt64,
             name String,
-            value Int32
+            value Int32,
+            version UInt64,
+            deleted UInt8 DEFAULT 0,
+            updated_at DateTime DEFAULT now()
         )
-        ENGINE = MergeTree
+        ENGINE = ReplacingMergeTree(version)
         ORDER BY id
+        TTL updated_at + INTERVAL 7 DAY WHERE deleted = 1;
     """)
+
 
     return db_name
 

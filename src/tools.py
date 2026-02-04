@@ -54,6 +54,7 @@ class plugin_wrapper:
     def __init__(self, module_path):
         module = importlib.import_module(module_path)
 
+        self.init = getattr(module, 'init')
         self.initiate_full_regeneration = getattr(module, 'initiate_full_regeneration')
         self.finished_full_regeneration = getattr(module, 'finished_full_regeneration')
         self.initiate_synch_mode = getattr(module, 'initiate_synch_mode')

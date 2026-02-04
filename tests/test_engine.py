@@ -37,6 +37,8 @@ def generate_init_load(db_name, count):
             (name, i),
         )
 
+    cursor.execute("UPDATE items SET value = value + 100")
+
     conn.commit()
 
     cursor.execute("SHOW MASTER STATUS;")
@@ -137,14 +139,10 @@ def test_engine_pipeline_advanced():
     except FileNotFoundError:
         pass
 
-    leads_count = 1
+    leads_count = 1000
 
     generate_init_load(db_name, leads_count)
-
-    time.sleep(1)
-
     engine_thread = start_engine()
-
     generate_load(db_name, leads_count)
 
     time.sleep(2)

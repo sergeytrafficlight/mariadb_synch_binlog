@@ -283,9 +283,11 @@ def full_regeneration_thread(mysql_settings, app_settings, controller):
         current_id = controller.get_and_update_id(full_regeneration_batch_len)
 
         q = f"SELECT * FROM {db_name}.{table_name} WHERE id >= {current_id} and id < {current_id + full_regeneration_batch_len};"
+
         cursor.execute(q)
         result = cursor.fetchall()
         count = len(result)
+        #logger.debug(f"Query: {q} count: {count}")
         if not count:
             break
         for r in result:
@@ -339,6 +341,8 @@ def run():
         preflight_check(cursor, MYSQL_SETTINGS, APP_SETTINGS)
 
         binlog = binlog_file(APP_SETTINGS['binlog_file'])
+
+        user_func.init()
 
         if not binlog.load():
             logger.debug(f"need full regeneration")
