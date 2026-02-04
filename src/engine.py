@@ -204,7 +204,7 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
     print(f"🚀 Binlog consumer started. Symch with [{app_settings['db_name']}] . Waiting for events...")
 
     try:
-        in_tx = False
+
         while not STOP:
             for event in binlog_stream:
 
@@ -214,13 +214,10 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
                     continue
                 '''
                 if isinstance(event, QueryEvent):
-                    if event.query == 'BEGIN':
-                        in_tx = True
-
+                    pass
                 elif isinstance(event, XidEvent):
-                    in_tx = False
                     binlog.file = binlog_stream.log_file
-                    binlog.pos = binlog_stream.log_pos
+                    binlog.pos = event.packet.log_pos
                     logger.debug(f"save binlog {binlog}")
                     assert binlog.save()
 
@@ -235,12 +232,6 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
                             user_func.process_event('update', schema, table, row)
                         elif isinstance(event, DeleteRowsEvent):
                             user_func.process_event('delete', schema, table, row)
-
-                    if not in_tx:
-                        binlog.file = binlog_stream.log_file
-                        binlog.pos = binlog_stream.log_pos
-                        logger.debug(f"save binlog {binlog}")
-                        assert binlog.save()
 
             time.sleep(0.2)
 
@@ -333,7 +324,9 @@ def full_regeneration(cursor, mysql_settings, app_settings, binlog):
 
 def run():
     from config.config import MYSQL_SETTINGS, APP_SETTINGS
-    global user_func
+    global user_func, STOP, last_sigint
+    STOP = False
+    last_sigint = 0
 
     user_func = plugin_wrapper(APP_SETTINGS['handle_events_plugin'])
 

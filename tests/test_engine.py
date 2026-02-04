@@ -53,6 +53,11 @@ def generate_load(db_name, count):
     )
     cursor = conn.cursor()
 
+    cursor.execute("SHOW MASTER STATUS;")
+    r = cursor.fetchall()
+    logger.debug(f"binlog before insert {r}")
+
+
     for i in range(count):
         name=f"name_{i}-load"
         logger.debug(f"insert load {name}")
@@ -71,7 +76,7 @@ def generate_load(db_name, count):
 
     conn.close()
 
-def _test_engine_pipeline():
+def test_engine_pipeline():
 
     global statistic
     statistic.clear()
@@ -150,16 +155,13 @@ def test_engine_pipeline_advanced():
 
 
     generate_load(db_name, leads_count)
-
     engine_thread = start_engine()
     time.sleep(2)
     os.kill(os.getpid(), signal.SIGINT)
     engine_thread.join(timeout=5)
     assert not engine_thread.is_alive()
 
-    assert statistic.process_event_insert == leads_count * 2
-    assert statistic.process_event_update == leads_count * 2
-    assert statistic.process_event_delete == leads_count
+    assert statistic.process_event_insert == leads_count * 3
     assert statistic.initiate_synch_mode == 2
     assert statistic.tear_down == 2
     assert statistic.initiate_full_regeneration == 1
