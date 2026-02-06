@@ -6,6 +6,7 @@ import logging
 import socket
 import threading
 import importlib
+import json
 from pymysqlreplication import BinLogStreamReader
 from pymysqlreplication.row_event import WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent
 from pymysqlreplication.event import MariadbGtidEvent, XidEvent, QueryEvent
@@ -30,6 +31,8 @@ user_func = None
 STOP = False
 last_sigint = 0
 FORCE_EXIT_WINDOW = 1.5
+GTID = None
+global_lock = threading.Lock()
 
 REQUIRED = {
     "REPLICATION SLAVE",
@@ -58,8 +61,6 @@ def handle_stop(signum, frame):
 
     last_sigint = now
     STOP = True
-    user_func.tear_down()
-
     print("\n🛑 Graceful shutdown requested (press Ctrl+C again to force)")
 
 signal.signal(signal.SIGINT, handle_stop)   # Ctrl+C
@@ -174,7 +175,7 @@ def preflight_check(cursor, mysql_settings, app_settings):
         check_tables(cursor, app_settings['db_name'], app_settings['scan_tables'])
 
 def start_binlog_consumer(mysql_settings, app_settings, binlog):
-    global user_func
+    global user_func, GTID, global_lock
 
 
     user_func.initiate_synch_mode()
@@ -208,12 +209,14 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
         while not STOP:
             for event in binlog_stream:
 
-                '''
+
                 if isinstance(event, MariadbGtidEvent):
                     #print(f"▶ GTID START: {event.gtid}")
+                    with global_lock:
+                        GTID = event.gtid
                     continue
-                '''
-                if isinstance(event, QueryEvent):
+
+                elif isinstance(event, QueryEvent):
                     pass
                 elif isinstance(event, XidEvent):
                     binlog.file = binlog_stream.log_file
@@ -238,8 +241,23 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
     finally:
         binlog_stream.close()
 
-def health_server(socket_path):
-    global STOP
+def health_server(socket_path, mysql_settings):
+
+    def get_current_gtid():
+        conn = pymysql.connect(**mysql_settings)
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT @@GLOBAL.gtid_current_pos;")
+        r = cursor.fetchall()
+        if r:
+            r = r[0]
+        else:
+            r = []
+        conn.close()
+        return r
+
+
+    global STOP, global_lock
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         server.bind(socket_path)
@@ -260,7 +278,22 @@ def health_server(socket_path):
 
                 continue
             with conn:
-                conn.sendall(b"OK!\n")
+                try:
+                    current_gtid = get_current_gtid()
+                    error = None
+                except Exception as e:
+                    current_gtid = None
+                    error = str(e)
+
+                with global_lock:
+                    response = {
+                        "status": "ok" if error is None else "error",
+                        "server_gtid": current_gtid,
+                        "consumer_gtid": GTID,
+                        "error": error,
+                    }
+
+                conn.sendall((json.dumps(response) + "\n").encode())
     finally:
         server.close()
         if os.path.exists(socket_path):
@@ -342,6 +375,10 @@ def run():
 
         binlog = binlog_file(APP_SETTINGS['binlog_file'])
 
+        health_thread = threading.Thread(target=health_server, daemon=True, args=(APP_SETTINGS['health_socket'], MYSQL_SETTINGS, ))
+        health_thread.start()
+
+
         user_func.init()
 
         if not binlog.load():
@@ -351,8 +388,6 @@ def run():
         else:
             logger.debug(f"regenereation is not need, start from {str(binlog)}")
 
-        health_thread = threading.Thread(target=health_server, daemon=True, args=(APP_SETTINGS['health_socket'], ))
-        health_thread.start()
 
         start_binlog_consumer(MYSQL_SETTINGS, APP_SETTINGS, binlog)
 
@@ -361,3 +396,5 @@ def run():
             conn.close()
         if health_thread:
             health_thread.join()
+
+        user_func.tear_down()

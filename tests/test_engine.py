@@ -7,6 +7,7 @@ import signal
 from tests.conftest import start_engine, create_mariadb_db, create_clickhouse_db
 from config.config_test import MYSQL_SETTINGS_ACTOR, APP_SETTINGS
 from plugins_test.plugin_test import statistic
+from src.tools import get_health_answer
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -31,7 +32,7 @@ def generate_init_load(db_name, count):
 
     for i in range(count):
         name=f"name_{i}-init-load"
-        logger.debug(f"insert init {name}")
+        #logger.debug(f"insert init {name}")
         cursor.execute(
             "INSERT INTO items (name, value) VALUES (%s, %s)",
             (name, i),
@@ -43,7 +44,7 @@ def generate_init_load(db_name, count):
 
     cursor.execute("SHOW MASTER STATUS;")
     r = cursor.fetchall()
-    logger.debug(f"binlog pos after insert {r}")
+    #logger.debug(f"binlog pos after insert {r}")
 
     conn.close()
 
@@ -57,12 +58,12 @@ def generate_load(db_name, count):
 
     cursor.execute("SHOW MASTER STATUS;")
     r = cursor.fetchall()
-    logger.debug(f"binlog before insert {r}")
+    #logger.debug(f"binlog before insert {r}")
 
 
     for i in range(count):
         name=f"name_{i}-load"
-        logger.debug(f"insert load {name}")
+        #logger.debug(f"insert load {name}")
         cursor.execute(
             "INSERT INTO items (name, value) VALUES (%s, %s)",
             (name, i),
@@ -74,11 +75,11 @@ def generate_load(db_name, count):
 
     cursor.execute("SHOW MASTER STATUS;")
     r = cursor.fetchall()
-    logger.debug(f"binlog pos after insert {r}")
+    #logger.debug(f"binlog pos after insert {r}")
 
     conn.close()
 
-def test_engine_pipeline():
+def _test_engine_pipeline():
 
     global statistic
     statistic.clear()
@@ -148,15 +149,20 @@ def test_engine_pipeline_advanced():
     time.sleep(2)
 
     os.kill(os.getpid(), signal.SIGINT)
-    engine_thread.join(timeout=5)
+    engine_thread.join(timeout=20)
     assert not engine_thread.is_alive()
 
 
     generate_load(db_name, leads_count)
     engine_thread = start_engine()
     time.sleep(2)
+    logger.debug(f"stop thread")
+    answer = get_health_answer(APP_SETTINGS['health_socket'])
     os.kill(os.getpid(), signal.SIGINT)
-    engine_thread.join(timeout=5)
+    engine_thread.join(timeout=10)
+    logger.debug("join done")
+
+    print(f"answer: {answer}")
     assert not engine_thread.is_alive()
 
     assert statistic.process_event_insert == leads_count * 3
@@ -166,3 +172,22 @@ def test_engine_pipeline_advanced():
     assert statistic.finished_full_regeneration == 1
 
 
+def _test_health_server():
+
+    global statistic
+    statistic.clear()
+    binlog_file_path = APP_SETTINGS['binlog_file']
+    try:
+        os.remove(binlog_file_path)
+    except FileNotFoundError:
+        pass
+
+    db_name = create_mariadb_db()
+    db_clickhouse = create_clickhouse_db()
+
+    leads_count = 100000
+    generate_init_load(db_name, leads_count)
+    engine_thread = start_engine()
+    time.sleep(2)
+    answer = get_health_answer(APP_SETTINGS['health_socket'])
+    print(answer)

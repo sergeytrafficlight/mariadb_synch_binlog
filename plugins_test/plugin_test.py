@@ -1,7 +1,9 @@
 import clickhouse_connect
+import threading
 import logging
+from src.tools import clickhouse_connection_pool, insert_buffer
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+#logger.setLevel(logging.DEBUG)
 
 CLICKHOUSE_SETTINGS_ACTOR = {
     "host": "127.0.0.1",
@@ -47,19 +49,19 @@ class statistic_class:
 
 statistic = statistic_class()
 version_id = 1
-ch_connector = None
+clickhouse_connectors = None
+insert_storage = None
+insert_storage_max_size = 1_000_000
+
+
+
 
 def init():
-    global ch_connector, statistic
+    global statistic, clickhouse_connectors, insert_storage
     statistic.init += 1
-
-    ch_connector = clickhouse_connect.get_client(
-        host=CLICKHOUSE_SETTINGS_ACTOR["host"],
-        port=CLICKHOUSE_SETTINGS_ACTOR["port"],
-        username=CLICKHOUSE_SETTINGS_ACTOR["user"],
-        password=CLICKHOUSE_SETTINGS_ACTOR["password"],
-        database=CLICKHOUSE_SETTINGS_ACTOR["database"],
-    )
+    clickhouse_connectors = clickhouse_connection_pool(CLICKHOUSE_SETTINGS_ACTOR)
+    insert_storage = insert_buffer()
+    logger.debug("INIT")
 
 
 def initiate_full_regeneration():
@@ -74,8 +76,10 @@ def finished_full_regeneration():
 
 def initiate_synch_mode():
     #print('initiate_synch_mode')
-    global statistic, version_id
+    global statistic, version_id, clickhouse_connectors
     statistic.initiate_synch_mode +=1
+
+    ch_connector = clickhouse_connectors.get_connector()
 
     result = ch_connector.query(
         "SELECT max(version) FROM items"
@@ -88,10 +92,15 @@ def initiate_synch_mode():
 
 
 
+
 def tear_down():
     #print('tear_down')
-    global statistic
+    global statistic, clickhouse_connectors
     statistic.tear_down +=1
+    del clickhouse_connectors
+    clickhouse_connectors = None
+
+    logger.debug("DEINIT")
 
 
 def process_event(event_type, schema, table, event):
@@ -99,7 +108,10 @@ def process_event(event_type, schema, table, event):
     # In sync mode, it is executed in a single-threaded context.
     # print(f"Event type: {event_type}, schema: {schema}, table: {table}, event: {event}")
 
-    global statistic, ch_connector, version_id
+    global statistic, version_id, clickhouse_connectors, insert_storage
+
+
+    #ch_connector = clickhouse_connectors.get_connector()
 
     if event_type == 'insert':
         logger.debug(f"insert event {schema}.{table} event: {event}")
@@ -112,11 +124,7 @@ def process_event(event_type, schema, table, event):
         columns = list(event.keys())
         values = [event[col] for col in columns]
 
-        ch_connector.insert(
-            table=table,
-            data=[values],
-            column_names=columns
-        )
+        insert_storage.push(values)
 
         # I intentionally ignore multithreading here.
         # During the full regeneration phase, multithreading does not make much sense for this logic.
@@ -135,11 +143,7 @@ def process_event(event_type, schema, table, event):
         columns = list(after.keys())
         values = [ after[col] for col in columns ]
 
-        ch_connector.insert(
-            table=table,
-            data=[values],
-            column_names=columns
-        )
+        insert_storage.push(values)
 
     elif event_type == 'delete':
         statistic.process_event_delete += 1

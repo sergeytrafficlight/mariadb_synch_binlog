@@ -1,8 +1,11 @@
 import os
 import re
 import json
+import socket
+
 import importlib
 import threading
+import clickhouse_connect
 
 
 class binlog_file:
@@ -73,3 +76,73 @@ class regeneration_threads_controller:
             result = self.current_id
             self.current_id += count
         return result
+
+class clickhouse_connection_pool:
+
+    def __init__(self, credentials):
+        self.lock = threading.Lock()
+        self.credentials = credentials
+        self.connectors = {}
+
+    def __del__(self):
+        with self.lock:
+            for k in list(self.connectors):
+                self.connectors[k].close()
+                del self.connectors[k]
+
+    def get_connector(self):
+        thread_id = threading.get_ident()
+        with self.lock:
+            if thread_id in self.connectors:
+                return self.connectors[thread_id]
+            client = clickhouse_connect.get_client(
+                host=self.credentials["host"],
+                port=self.credentials["port"],
+                username=self.credentials["user"],
+                password=self.credentials["password"],
+                database=self.credentials["database"],
+            )
+
+            return client
+
+class insert_buffer:
+
+    def __init__(self):
+
+        self.lock = threading.Lock()
+        self.tables_data = {}
+        self.tables_columns = {}
+
+    def push(self, table, columns, data) -> int:
+        with self.lock:
+            if table not in self.tables_data:
+                self.tables_data[table] = []
+                self.tables_columns[table] = columns
+            else:
+                assert self.tables_columns[table] == columns
+                
+            self.tables_data[table].append(data)
+            return len(self.tables_data[table])
+
+    def get_and_clear(self, table):
+        with self.lock:
+            r = self.tables[table]
+            self.tables[table] = []
+            return r
+
+    def get_tables(self):
+        with self.lock:
+            return self.tables.keys()
+
+
+
+
+
+def get_health_answer(socket_path):
+
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+        s.connect(socket_path)
+        data = s.recv(4096)
+
+    return data.decode()
+    #print(json.loads(data))
