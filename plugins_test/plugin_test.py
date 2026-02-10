@@ -1,7 +1,7 @@
 import clickhouse_connect
 import threading
 import logging
-from src.tools import clickhouse_connection_pool, insert_buffer
+from src.tools import insert_buffer
 logger = logging.getLogger(__name__)
 #logger.setLevel(logging.DEBUG)
 
@@ -49,18 +49,39 @@ class statistic_class:
 
 statistic = statistic_class()
 version_id = 1
-clickhouse_connectors = None
 insert_storage = None
 insert_storage_max_size = 1_000_000
 
 
+def _push_to_clickhouse(storage):
+    logger.debug("push to clickhouse")
+    client = clickhouse_connect.get_client(
+        host=CLICKHOUSE_SETTINGS_ACTOR["host"],
+        port=CLICKHOUSE_SETTINGS_ACTOR["port"],
+        username=CLICKHOUSE_SETTINGS_ACTOR["user"],
+        password=CLICKHOUSE_SETTINGS_ACTOR["password"],
+        database=CLICKHOUSE_SETTINGS_ACTOR["database"],
+    )
+
+    while True:
+        logger.debug("get pack")
+        pack = storage.get_similar_pack_clear()
+        logger.debug(f"Drop to CH {len(pack)}")
+        if not len(pack):
+            break
+        client.insert(
+            table=pack[0].table_name,
+            column_names=pack[0].keys,
+            data=[p.values for p in pack]
+        )
+
+    client.close()
 
 
 def init():
     global statistic, clickhouse_connectors, insert_storage
     statistic.init += 1
-    clickhouse_connectors = clickhouse_connection_pool(CLICKHOUSE_SETTINGS_ACTOR)
-    insert_storage = insert_buffer()
+    insert_storage = insert_buffer(insert_storage_max_size)
     logger.debug("INIT")
 
 
@@ -76,12 +97,18 @@ def finished_full_regeneration():
 
 def initiate_synch_mode():
     #print('initiate_synch_mode')
-    global statistic, version_id, clickhouse_connectors
+    global statistic, version_id
     statistic.initiate_synch_mode +=1
 
-    ch_connector = clickhouse_connectors.get_connector()
+    client = clickhouse_connect.get_client(
+        host=CLICKHOUSE_SETTINGS_ACTOR["host"],
+        port=CLICKHOUSE_SETTINGS_ACTOR["port"],
+        username=CLICKHOUSE_SETTINGS_ACTOR["user"],
+        password=CLICKHOUSE_SETTINGS_ACTOR["password"],
+        database=CLICKHOUSE_SETTINGS_ACTOR["database"],
+    )
 
-    result = ch_connector.query(
+    result = client.query(
         "SELECT max(version) FROM items"
     )
 
@@ -90,15 +117,12 @@ def initiate_synch_mode():
         #none
         version_id = 1
 
-
-
+    client.close()
 
 def tear_down():
     #print('tear_down')
-    global statistic, clickhouse_connectors
+    global statistic
     statistic.tear_down +=1
-    del clickhouse_connectors
-    clickhouse_connectors = None
 
     logger.debug("DEINIT")
 
@@ -124,7 +148,7 @@ def process_event(event_type, schema, table, event):
         columns = list(event.keys())
         values = [event[col] for col in columns]
 
-        insert_storage.push(values)
+        insert_storage.push(table, columns, values)
 
         # I intentionally ignore multithreading here.
         # During the full regeneration phase, multithreading does not make much sense for this logic.
@@ -143,7 +167,7 @@ def process_event(event_type, schema, table, event):
         columns = list(after.keys())
         values = [ after[col] for col in columns ]
 
-        insert_storage.push(values)
+        insert_storage.push(table, columns, values)
 
     elif event_type == 'delete':
         statistic.process_event_delete += 1
@@ -155,11 +179,18 @@ def process_event(event_type, schema, table, event):
 
         columns = list(deleted_record.keys())
         values = [deleted_record[col] for col in columns]
-        ch_connector.insert(
-            table=table,
-            data=[values],
-            column_names=columns
-        )
+
+        insert_storage.push(table, columns, values)
+
 
     else:
         raise RuntimeError(f"Unknown event type '{event_type}'")
+
+
+    if insert_storage.overload():
+        _push_to_clickhouse(insert_storage)
+
+
+def XidEvent():
+    logger.debug("XidEvent")
+    _push_to_clickhouse(insert_storage)

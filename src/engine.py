@@ -218,7 +218,9 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
 
                 elif isinstance(event, QueryEvent):
                     pass
+
                 elif isinstance(event, XidEvent):
+                    user_func.XidEvent()
                     binlog.file = binlog_stream.log_file
                     binlog.pos = event.packet.log_pos
                     logger.debug(f"save binlog {binlog}")

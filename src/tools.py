@@ -63,6 +63,8 @@ class plugin_wrapper:
         self.initiate_synch_mode = getattr(module, 'initiate_synch_mode')
         self.tear_down = getattr(module, 'tear_down')
         self.process_event = getattr(module, 'process_event')
+        self.XidEvent = getattr(module, 'XidEvent')
+
 
 class regeneration_threads_controller:
 
@@ -77,66 +79,52 @@ class regeneration_threads_controller:
             self.current_id += count
         return result
 
-class clickhouse_connection_pool:
 
-    def __init__(self, credentials):
-        self.lock = threading.Lock()
-        self.credentials = credentials
-        self.connectors = {}
+class insert_item:
 
-    def __del__(self):
-        with self.lock:
-            for k in list(self.connectors):
-                self.connectors[k].close()
-                del self.connectors[k]
+    def __init__(self, table_name: str, keys: [], values: []):
+        self.table_name = table_name
+        self.keys = keys
+        self.values = values
 
-    def get_connector(self):
-        thread_id = threading.get_ident()
-        with self.lock:
-            if thread_id in self.connectors:
-                return self.connectors[thread_id]
-            client = clickhouse_connect.get_client(
-                host=self.credentials["host"],
-                port=self.credentials["port"],
-                username=self.credentials["user"],
-                password=self.credentials["password"],
-                database=self.credentials["database"],
-            )
-
-            return client
 
 class insert_buffer:
 
-    def __init__(self):
+    def __init__(self, triggering_rows_count = 1_000):
 
         self.lock = threading.Lock()
-        self.tables_data = {}
-        self.tables_columns = {}
+        self.triggering_rows_count = triggering_rows_count
+        self.items = []
 
-    def push(self, table, columns, data) -> int:
+    def push(self, table, columns, data) -> bool:
+        #return triggered
+
         with self.lock:
-            if table not in self.tables_data:
-                self.tables_data[table] = []
-                self.tables_columns[table] = columns
-            else:
-                assert self.tables_columns[table] == columns
-                
-            self.tables_data[table].append(data)
-            return len(self.tables_data[table])
+            self.items.append(insert_item(table, columns, data))
+            return len(self.items) > self.triggering_rows_count
 
-    def get_and_clear(self, table):
+    def overload(self):
         with self.lock:
-            r = self.tables[table]
-            self.tables[table] = []
-            return r
+            return len(self.items) > self.triggering_rows_count
 
-    def get_tables(self):
+    def get_similar_pack_clear(self):
         with self.lock:
-            return self.tables.keys()
+            if not len(self.items):
+                return []
 
 
+            pack = []
 
+            for i, item in enumerate(self.items):
+                if i == 0:
+                    pack.append(item)
+                    continue
+                if pack[0].table_name != item.table_name or pack[0].keys != item.keys:
+                    break
+                pack.append(item)
 
+            del self.items[:len(pack)]
+            return pack
 
 def get_health_answer(socket_path):
 
@@ -146,3 +134,6 @@ def get_health_answer(socket_path):
 
     return data.decode()
     #print(json.loads(data))
+
+def get_gtid_diff(gtid_a, gtid_b):
+    pass

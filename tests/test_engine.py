@@ -4,9 +4,10 @@ import logging
 import time
 import os
 import signal
+import clickhouse_connect
 from tests.conftest import start_engine, create_mariadb_db, create_clickhouse_db
 from config.config_test import MYSQL_SETTINGS_ACTOR, APP_SETTINGS
-from plugins_test.plugin_test import statistic
+from plugins_test.plugin_test import statistic, CLICKHOUSE_SETTINGS_ACTOR
 from src.tools import get_health_answer
 
 logger = logging.getLogger(__name__)
@@ -134,13 +135,51 @@ def test_engine_pipeline_advanced():
     db_name = create_mariadb_db()
     db_clickhouse = create_clickhouse_db()
 
+    client_ch = clickhouse_connect.get_client(
+        host=CLICKHOUSE_SETTINGS_ACTOR["host"],
+        port=CLICKHOUSE_SETTINGS_ACTOR["port"],
+        username=CLICKHOUSE_SETTINGS_ACTOR["user"],
+        password=CLICKHOUSE_SETTINGS_ACTOR["password"],
+        database=CLICKHOUSE_SETTINGS_ACTOR["database"],
+    )
+
+    result = client_ch.query(
+        '''
+        SELECT
+            COUNT(*) as count_rows,
+            SUM(value) as sum_rows
+        FROM
+        (
+            SELECT
+                argMax(value, version) AS value,
+                argMax(deleted, version) AS deleted
+            FROM items
+            GROUP BY id
+        )       
+        WHERE deleted = 0 
+        '''
+    )
+
+    result = result.named_results()
+    result = next(result)
+
+    ch_count = int(result['count_rows'])
+    ch_sum = int(result['sum_rows'])
+
+    assert ch_count == 0
+    assert ch_sum == 0
+
+    client_ch.close()
+
+
+
     binlog_file_path = APP_SETTINGS['binlog_file']
     try:
         os.remove(binlog_file_path)
     except FileNotFoundError:
         pass
 
-    leads_count = 1000
+    leads_count = 2
 
     generate_init_load(db_name, leads_count)
     engine_thread = start_engine()
@@ -170,6 +209,53 @@ def test_engine_pipeline_advanced():
     assert statistic.tear_down == 2
     assert statistic.initiate_full_regeneration == 1
     assert statistic.finished_full_regeneration == 1
+
+
+    conn_mariadb = pymysql.connect(
+        **MYSQL_SETTINGS_ACTOR,
+    )
+    cursor_mariadb = conn_mariadb.cursor()
+
+    client_ch = clickhouse_connect.get_client(
+        host=CLICKHOUSE_SETTINGS_ACTOR["host"],
+        port=CLICKHOUSE_SETTINGS_ACTOR["port"],
+        username=CLICKHOUSE_SETTINGS_ACTOR["user"],
+        password=CLICKHOUSE_SETTINGS_ACTOR["password"],
+        database=CLICKHOUSE_SETTINGS_ACTOR["database"],
+    )
+
+    cursor_mariadb.execute("SELECT COUNT(*), SUM(value) FROM items;")
+    row_mariadb = cursor_mariadb.fetchall()
+    mariadb_count = int(row_mariadb[0][0])
+    mariadb_sum = int(row_mariadb[0][1])
+
+    result = client_ch.query(
+        '''
+        SELECT
+            COUNT(*) as count_rows,
+            SUM(value) as sum_rows
+        FROM
+        (
+            SELECT
+                argMax(value, version) AS value,
+                argMax(deleted, version) AS deleted
+            FROM items
+            GROUP BY id
+        )       
+        WHERE deleted = 0 
+        '''
+    )
+
+    result = result.named_results()
+    result = next(result)
+
+    ch_count = int(result['count_rows'])
+    ch_sum = int(result['sum_rows'])
+
+    assert mariadb_count == ch_count
+    assert mariadb_sum == ch_sum
+
+
 
 
 def _test_health_server():
