@@ -8,7 +8,7 @@ import clickhouse_connect
 from tests.conftest import start_engine, create_mariadb_db, create_clickhouse_db
 from config.config_test import MYSQL_SETTINGS_ACTOR, APP_SETTINGS
 from plugins_test.plugin_test import statistic, CLICKHOUSE_SETTINGS_ACTOR
-from src.tools import get_health_answer
+from src.tools import get_health_answer, get_gtid_diff
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -36,6 +36,11 @@ def generate_init_load(db_name, count):
         #logger.debug(f"insert init {name}")
         cursor.execute(
             "INSERT INTO items (name, value) VALUES (%s, %s)",
+            (name, i),
+        )
+
+        cursor.execute(
+            "INSERT INTO items2 (name, value) VALUES (%s, %s)",
             (name, i),
         )
 
@@ -69,6 +74,10 @@ def generate_load(db_name, count):
             "INSERT INTO items (name, value) VALUES (%s, %s)",
             (name, i),
         )
+        cursor.execute(
+            "INSERT INTO items2 (name, value) VALUES (%s, %s)",
+            (name, i),
+        )
 
     cursor.execute("UPDATE items SET value = value + 100")
     cursor.execute("DELETE FROM items WHERE id % 2 = 0")
@@ -79,46 +88,6 @@ def generate_load(db_name, count):
     #logger.debug(f"binlog pos after insert {r}")
 
     conn.close()
-
-def _test_engine_pipeline():
-
-    global statistic
-    statistic.clear()
-
-    binlog_file_path = APP_SETTINGS['binlog_file']
-    try:
-        os.remove(binlog_file_path)
-    except FileNotFoundError:
-        pass
-
-    leads_count = 2
-
-    db_name = create_mariadb_db()
-
-    generate_init_load(db_name, leads_count)
-    time.sleep(1)
-
-    engine_thread = start_engine()
-
-    generate_load(db_name, leads_count)
-
-    time.sleep(2)
-
-    os.kill(os.getpid(), signal.SIGINT)
-    engine_thread.join(timeout=5)
-
-    assert not engine_thread.is_alive()
-
-
-
-    assert statistic.process_event_insert == leads_count * 2
-    assert statistic.process_event_update == leads_count * 2
-    assert statistic.process_event_delete == leads_count
-    assert statistic.initiate_synch_mode == 1
-    assert statistic.tear_down == 1
-    assert statistic.initiate_full_regeneration == 1
-    assert statistic.finished_full_regeneration == 1
-
 
 
 def test_engine_pipeline_advanced():
@@ -179,13 +148,20 @@ def test_engine_pipeline_advanced():
     except FileNotFoundError:
         pass
 
-    leads_count = 2
+    leads_count = 10_000
+    #leads_count = 2
 
     generate_init_load(db_name, leads_count)
     engine_thread = start_engine()
     generate_load(db_name, leads_count)
 
     time.sleep(2)
+
+    answer = get_health_answer(APP_SETTINGS['health_socket'])
+    print(f"answer: {answer}")
+
+    assert answer['init_rows_total'] == leads_count * 2
+    assert answer['init_rows_parsed'] == leads_count * 2
 
     os.kill(os.getpid(), signal.SIGINT)
     engine_thread.join(timeout=20)
@@ -256,24 +232,15 @@ def test_engine_pipeline_advanced():
     assert mariadb_sum == ch_sum
 
 
+def test_gtid_diff():
 
-
-def _test_health_server():
-
-    global statistic
-    statistic.clear()
-    binlog_file_path = APP_SETTINGS['binlog_file']
-    try:
-        os.remove(binlog_file_path)
-    except FileNotFoundError:
-        pass
-
-    db_name = create_mariadb_db()
-    db_clickhouse = create_clickhouse_db()
-
-    leads_count = 100000
-    generate_init_load(db_name, leads_count)
-    engine_thread = start_engine()
-    time.sleep(2)
-    answer = get_health_answer(APP_SETTINGS['health_socket'])
-    print(answer)
+    r = get_gtid_diff("1-1-2236", "0-1-158,1-1-2236")
+    assert r == 0
+    r = get_gtid_diff("1-1-2236", "0-1-158,1-1-2237")
+    assert r == 1
+    r = get_gtid_diff("3-1-2236", "0-1-158,1-1-2237")
+    assert r == 0
+    r = get_gtid_diff("1-1-2236", "0-1-158,1-1-2235")
+    assert r == 0
+    r = get_gtid_diff("1-1-2236", None)
+    assert r == 0

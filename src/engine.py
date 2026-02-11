@@ -7,10 +7,11 @@ import socket
 import threading
 import importlib
 import json
+from enum import Enum
 from pymysqlreplication import BinLogStreamReader
 from pymysqlreplication.row_event import WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent
 from pymysqlreplication.event import MariadbGtidEvent, XidEvent, QueryEvent
-from src.tools import binlog_file, plugin_wrapper, regeneration_threads_controller
+from src.tools import binlog_file, plugin_wrapper, regeneration_threads_controller, get_gtid_diff
 
 logging.getLogger("pymysqlreplication").setLevel(logging.ERROR)
 
@@ -26,13 +27,29 @@ if not logger.handlers:
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
+class Stage(Enum):
+    INIT = 'INIT'
+    REGENERATION = 'REGENERATION'
+    SYNCH = 'SYNCH'
 
-user_func = None
-STOP = False
-last_sigint = 0
-FORCE_EXIT_WINDOW = 1.5
+USER_FUNC = None
+STOP = None
+LAST_SIGINT = None
+FORCE_EXIT_WINDOW = None
 GTID = None
-global_lock = threading.Lock()
+STAGE = None
+REGENERATION_CONTROLLER = None
+GLOBAL_LOCK = threading.Lock()
+
+def init(MYSQL_SETTINGS, APP_SETTINGS):
+    global USER_FUNC, STOP, LAST_SIGINT, FORCE_EXIT_WINDOW, GTID, STAGE, REGENERATION_CONTROLLER
+    USER_FUNC = plugin_wrapper(APP_SETTINGS['handle_events_plugin'])
+    STOP = False
+    LAST_SIGINT = 0
+    FORCE_EXIT_WINDOW = 1.5
+    GTID = None
+    STAGE = Stage.INIT
+    REGENERATION_CONTROLLER = regeneration_threads_controller()
 
 REQUIRED = {
     "REPLICATION SLAVE",
@@ -51,15 +68,15 @@ FORBIDDEN = {
 
 
 def handle_stop(signum, frame):
-    global STOP, last_sigint, user_func
+    global STOP, LAST_SIGINT, user_func
     now = time.time()
 
     # второй Ctrl+C подряд
-    if now - last_sigint < FORCE_EXIT_WINDOW:
+    if now - LAST_SIGINT < FORCE_EXIT_WINDOW:
         print("\n💥 Force exit (second Ctrl+C)")
         os._exit(130)  # немедленный выход
 
-    last_sigint = now
+    LAST_SIGINT = now
     STOP = True
     print("\n🛑 Graceful shutdown requested (press Ctrl+C again to force)")
 
@@ -175,12 +192,11 @@ def preflight_check(cursor, mysql_settings, app_settings):
         check_tables(cursor, app_settings['db_name'], app_settings['scan_tables'])
 
 def start_binlog_consumer(mysql_settings, app_settings, binlog):
-    global user_func, GTID, global_lock
+    global USER_FUNC, GTID, GLOBAL_LOCK, STAGE
 
 
-    user_func.initiate_synch_mode()
-
-    print(f"start from {binlog.file} | {binlog.pos}")
+    USER_FUNC.initiate_synch_mode()
+    STAGE = Stage.SYNCH
 
     binlog_stream = BinLogStreamReader(
         connection_settings=mysql_settings,
@@ -202,7 +218,7 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
         log_pos=binlog.pos,
     )
 
-    print(f"🚀 Binlog consumer started. Symch with [{app_settings['db_name']}] . Waiting for events...")
+    logger.info(f"🚀 Binlog consumer started. Synch with [{app_settings['db_name']}] . Waiting for events...")
 
     try:
 
@@ -211,8 +227,7 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
 
 
                 if isinstance(event, MariadbGtidEvent):
-                    #print(f"▶ GTID START: {event.gtid}")
-                    with global_lock:
+                    with GLOBAL_LOCK:
                         GTID = event.gtid
                     continue
 
@@ -220,7 +235,7 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
                     pass
 
                 elif isinstance(event, XidEvent):
-                    user_func.XidEvent()
+                    USER_FUNC.XidEvent()
                     binlog.file = binlog_stream.log_file
                     binlog.pos = event.packet.log_pos
                     logger.debug(f"save binlog {binlog}")
@@ -232,11 +247,11 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
                     for row in event.rows:
 
                         if isinstance(event, WriteRowsEvent):
-                            user_func.process_event('insert', schema, table, row['values'])
+                            USER_FUNC.process_event('insert', schema, table, row['values'])
                         elif isinstance(event, UpdateRowsEvent):
-                            user_func.process_event('update', schema, table, row)
+                            USER_FUNC.process_event('update', schema, table, row)
                         elif isinstance(event, DeleteRowsEvent):
-                            user_func.process_event('delete', schema, table, row)
+                            USER_FUNC.process_event('delete', schema, table, row)
 
             time.sleep(0.2)
 
@@ -252,14 +267,14 @@ def health_server(socket_path, mysql_settings):
         cursor.execute("SELECT @@GLOBAL.gtid_current_pos;")
         r = cursor.fetchall()
         if r:
-            r = r[0]
+            r = r[0][0]
         else:
             r = []
         conn.close()
         return r
 
 
-    global STOP, global_lock
+    global STOP, GLOBAL_LOCK, REGENERATION_CONTROLLER, STAGE
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         server.bind(socket_path)
@@ -270,7 +285,7 @@ def health_server(socket_path, mysql_settings):
     server.listen(1)
     server.settimeout(1.0)
 
-    print("🟢 Health server started")
+    logger.info("🟢 Health server started")
 
     try:
         while not STOP:
@@ -287,11 +302,16 @@ def health_server(socket_path, mysql_settings):
                     current_gtid = None
                     error = str(e)
 
-                with global_lock:
+                with GLOBAL_LOCK:
+                    init_rows_total, init_rows_parsed = REGENERATION_CONTROLLER.statistic()
                     response = {
                         "status": "ok" if error is None else "error",
+                        "stage": str(STAGE),
+                        "init_rows_total": init_rows_total,
+                        "init_rows_parsed": init_rows_parsed,
                         "server_gtid": current_gtid,
                         "consumer_gtid": GTID,
+                        "gtid_diff": get_gtid_diff(GTID, current_gtid),
                         "error": error,
                     }
 
@@ -300,13 +320,14 @@ def health_server(socket_path, mysql_settings):
         server.close()
         if os.path.exists(socket_path):
             os.remove(socket_path)
-        print("🔴 Health server stopped")
+        logger.info("🔴 Health server stopped")
 
 
-def full_regeneration_thread(mysql_settings, app_settings, controller):
+def full_regeneration_thread(mysql_settings, app_settings):
+    global USER_FUNC, REGENERATION_CONTROLLER
 
     db_name = app_settings['db_name']
-    table_name = app_settings['init_table']
+    tables_name = app_settings['init_tables']
     full_regeneration_batch_len = int(app_settings['full_regeneration_batch_len'])
 
     conn = pymysql.connect(**mysql_settings)
@@ -314,31 +335,43 @@ def full_regeneration_thread(mysql_settings, app_settings, controller):
     cursor.execute("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ;")
     cursor.execute("START TRANSACTION WITH CONSISTENT SNAPSHOT;")
 
-    while True:
-        current_id = controller.get_and_update_id(full_regeneration_batch_len)
+    for table in tables_name:
+        # requesting row count for each table in every thread
+        # this is redundant but ensures we get maximum row count
+        #   for high-load tables where each thread may have snapshots at different row counts
+        # this data is needed for health server to report total row count
+        cursor.execute(f"SELECT COUNT(*) as cnt FROM {db_name}.{table};")
+        r = cursor.fetchall()
+        count = r[0]['cnt']
 
-        q = f"SELECT * FROM {db_name}.{table_name} WHERE id >= {current_id} and id < {current_id + full_regeneration_batch_len};"
 
-        cursor.execute(q)
-        result = cursor.fetchall()
-        count = len(result)
-        #logger.debug(f"Query: {q} count: {count}")
-        if not count:
-            break
-        for r in result:
-            user_func.process_event('insert', db_name, table_name, r)
+        REGENERATION_CONTROLLER.put_rows_count(table, count)
+
+    for table in tables_name:
+        while True:
+            current_id = REGENERATION_CONTROLLER.get_and_update_id(table, full_regeneration_batch_len)
+
+            q = f"SELECT * FROM {db_name}.{table} WHERE id >= {current_id} and id < {current_id + full_regeneration_batch_len};"
+
+            cursor.execute(q)
+            result = cursor.fetchall()
+            count = len(result)
+            #logger.debug(f"Query: {q} count: {count}")
+            if not count:
+                break
+            for r in result:
+                USER_FUNC.process_event('insert', db_name, table, r)
+
+            REGENERATION_CONTROLLER.add_parsed_count(table, count)
 
     conn.close()
 
 
 
 def full_regeneration(cursor, mysql_settings, app_settings, binlog):
-
-    user_func.initiate_full_regeneration()
-
-    controller = regeneration_threads_controller()
-
-    init_table = app_settings['init_table']
+    global USER_FUNC, STAGE
+    USER_FUNC.initiate_full_regeneration()
+    STAGE = Stage.REGENERATION
 
     cursor.execute("SHOW MASTER STATUS;")
     r = cursor.fetchall()
@@ -350,22 +383,19 @@ def full_regeneration(cursor, mysql_settings, app_settings, binlog):
     threads = []
 
     for i in range(app_settings['full_regeneration_threads_count']):
-        t = threading.Thread(target=full_regeneration_thread, args=(mysql_settings, app_settings, controller))
+        t = threading.Thread(target=full_regeneration_thread, args=(mysql_settings, app_settings,))
         t.start()
         threads.append(t)
 
     for t in threads:
         t.join()
 
-    user_func.finished_full_regeneration()
+    USER_FUNC.finished_full_regeneration()
 
 def run():
     from config.config import MYSQL_SETTINGS, APP_SETTINGS
-    global user_func, STOP, last_sigint
-    STOP = False
-    last_sigint = 0
-
-    user_func = plugin_wrapper(APP_SETTINGS['handle_events_plugin'])
+    global USER_FUNC, STAGE
+    init(MYSQL_SETTINGS, APP_SETTINGS)
 
     health_thread = None
     conn = None
@@ -381,7 +411,7 @@ def run():
         health_thread.start()
 
 
-        user_func.init()
+        USER_FUNC.init()
 
         if not binlog.load():
             logger.debug(f"need full regeneration")
@@ -399,4 +429,4 @@ def run():
         if health_thread:
             health_thread.join()
 
-        user_func.tear_down()
+        USER_FUNC.tear_down()

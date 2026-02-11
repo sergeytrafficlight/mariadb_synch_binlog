@@ -68,16 +68,49 @@ class plugin_wrapper:
 
 class regeneration_threads_controller:
 
+    class table_info:
+
+        def __init__(self):
+            self.current_id = 0
+            self.rows_count = 0
+            self.rows_parsed = 0
+
     def __init__(self):
-        self.current_id = 0
+        self.tables = {}
         self.lock = threading.Lock()
 
-    def get_and_update_id(self, count):
+    def get_and_update_id(self, table, count):
         result = None
         with self.lock:
-            result = self.current_id
-            self.current_id += count
+            if table not in self.tables:
+                self.tables[table] = self.table_info()
+
+            result = self.tables[table].current_id
+            self.tables[table].current_id += count
+
         return result
+
+    def add_parsed_count(self, table, count):
+        with self.lock:
+            self.tables[table].rows_parsed += count
+
+    def put_rows_count(self, table, count):
+        with self.lock:
+            if table not in self.tables:
+                self.tables[table] = self.table_info()
+            if count > self.tables[table].rows_count:
+                self.tables[table].rows_count = count
+
+
+    def statistic(self):
+        with self.lock:
+            total = 0
+            parsed = 0
+            for k, v in self.tables.items():
+                total += v.rows_count
+                parsed += v.rows_parsed
+            return (total, parsed)
+
 
 
 class insert_item:
@@ -132,8 +165,38 @@ def get_health_answer(socket_path):
         s.connect(socket_path)
         data = s.recv(4096)
 
-    return data.decode()
+    return json.loads(data.decode())
     #print(json.loads(data))
 
 def get_gtid_diff(gtid_a, gtid_b):
-    pass
+
+    def parse_gtid(gtid):
+        r = {}
+        for g in gtid.split(','):
+            g = g.strip()
+            if not g:
+                continue
+
+            d, _, s = g.split('-')
+            d = int(d)
+            s = int(s)
+
+            r[d] = max(s, r.get(d, 0))
+        return r
+
+    if gtid_a is None or gtid_b is None:
+        return 0
+
+    a = parse_gtid(gtid_a)
+    b = parse_gtid(gtid_b)
+
+    result = 0
+
+    for domain, seq_b in b.items():
+        if domain not in a:
+            continue
+        seq_a = a[domain]
+        if seq_b > seq_a:
+            result += seq_b - seq_a
+
+    return result

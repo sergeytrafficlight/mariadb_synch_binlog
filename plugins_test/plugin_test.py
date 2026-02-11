@@ -134,6 +134,9 @@ def process_event(event_type, schema, table, event):
 
     global statistic, version_id, clickhouse_connectors, insert_storage
 
+    if table != 'items':
+        return
+
 
     #ch_connector = clickhouse_connectors.get_connector()
 

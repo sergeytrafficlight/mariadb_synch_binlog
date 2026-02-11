@@ -15,7 +15,7 @@ MYSQL_SETTINGS_ACTOR = {
 APP_SETTINGS = {
     'db_name': 'mariadb_synch_binlog_tmp_test',
     #init table - this table will scan as initital creating data
-    'init_table': 'items',
+    'init_tables': ['items', 'items2'],
     'full_regeneration_threads_count': 20,
     'full_regeneration_batch_len': 10,
     #sync next tables, while parsing binlog
