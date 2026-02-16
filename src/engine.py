@@ -16,7 +16,7 @@ from src.tools import binlog_file, plugin_wrapper, regeneration_threads_controll
 logging.getLogger("pymysqlreplication").setLevel(logging.ERROR)
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+#logger.setLevel(logging.DEBUG)
 
 if not logger.handlers:
     console_handler = logging.StreamHandler()
@@ -49,7 +49,7 @@ def init(MYSQL_SETTINGS, APP_SETTINGS):
     FORCE_EXIT_WINDOW = 1.5
     GTID = None
     STAGE = Stage.INIT
-    REGENERATION_CONTROLLER = regeneration_threads_controller()
+    REGENERATION_CONTROLLER = regeneration_threads_controller(APP_SETTINGS['full_regeneration_threads_count'])
 
 REQUIRED = {
     "REPLICATION SLAVE",
@@ -169,7 +169,8 @@ def preflight_check(cursor, mysql_settings, app_settings):
 
     def check_tables(cursor, db_name, tables):
 
-        cursor.execute(f"SHOW TABLES FROM {db_name};")
+        q = f"SHOW TABLES FROM {db_name};"
+        cursor.execute(q)
 
         r = cursor.fetchall()
         existing_tables = []
@@ -182,7 +183,7 @@ def preflight_check(cursor, mysql_settings, app_settings):
                 errors.append(t)
 
         if len(errors):
-            raise RuntimeError(f"Can't find tables: {errors}")
+            raise RuntimeError(f"Can't find tables: {errors} | db_name {db_name}")
 
     check_grants(cursor)
     check_variables(cursor)
@@ -340,12 +341,18 @@ def full_regeneration_thread(mysql_settings, app_settings):
         # this is redundant but ensures we get maximum row count
         #   for high-load tables where each thread may have snapshots at different row counts
         # this data is needed for health server to report total row count
-        cursor.execute(f"SELECT COUNT(*) as cnt FROM {db_name}.{table};")
+        q = f"SELECT COUNT(*) as cnt, MIN(id) as min_id FROM {db_name}.{table};"
+
+        cursor.execute(q)
         r = cursor.fetchall()
         count = r[0]['cnt']
+        min_id = r[0]['min_id']
+        logger.debug(f"{q} count: {count} min_id: {min_id}")
 
 
-        REGENERATION_CONTROLLER.put_rows_count(table, count)
+        REGENERATION_CONTROLLER.put_rows_count(table, count, min_id)
+
+    REGENERATION_CONTROLLER.barrier.wait()
 
     for table in tables_name:
         while True:
@@ -353,10 +360,11 @@ def full_regeneration_thread(mysql_settings, app_settings):
 
             q = f"SELECT * FROM {db_name}.{table} WHERE id >= {current_id} and id < {current_id + full_regeneration_batch_len};"
 
+
             cursor.execute(q)
             result = cursor.fetchall()
             count = len(result)
-            #logger.debug(f"Query: {q} count: {count}")
+            logger.debug(f"Query: {q} count: {count}")
             if not count:
                 break
             for r in result:

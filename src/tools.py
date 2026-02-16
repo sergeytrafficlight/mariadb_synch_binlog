@@ -71,13 +71,14 @@ class regeneration_threads_controller:
     class table_info:
 
         def __init__(self):
-            self.current_id = 0
+            self.current_id = None
             self.rows_count = 0
             self.rows_parsed = 0
 
-    def __init__(self):
+    def __init__(self, threads_count):
         self.tables = {}
         self.lock = threading.Lock()
+        self.barrier = threading.Barrier(threads_count)
 
     def get_and_update_id(self, table, count):
         result = None
@@ -85,7 +86,7 @@ class regeneration_threads_controller:
             if table not in self.tables:
                 self.tables[table] = self.table_info()
 
-            result = self.tables[table].current_id
+            result = self.tables[table].current_id or 0
             self.tables[table].current_id += count
 
         return result
@@ -94,12 +95,14 @@ class regeneration_threads_controller:
         with self.lock:
             self.tables[table].rows_parsed += count
 
-    def put_rows_count(self, table, count):
+    def put_rows_count(self, table, count, min_id):
         with self.lock:
             if table not in self.tables:
                 self.tables[table] = self.table_info()
             if count > self.tables[table].rows_count:
                 self.tables[table].rows_count = count
+            if self.tables[table].current_id is None or min_id < self.tables[table].current_id:
+                self.tables[table].current_id = min_id
 
 
     def statistic(self):
