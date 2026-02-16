@@ -98,11 +98,12 @@ def create_clickhouse_db():
     return db_name
 
 
-def start_engine():
+def start_engine(MYSQL_SETTINGS, APP_SETTINGS):
 
     thread = threading.Thread(
         target=run,
         daemon=True,
+        args=(MYSQL_SETTINGS, APP_SETTINGS,)
     )
 
     thread.start()

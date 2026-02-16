@@ -6,7 +6,7 @@ import os
 import signal
 import clickhouse_connect
 from tests.conftest import start_engine, create_mariadb_db, create_clickhouse_db
-from config.config_test import MYSQL_SETTINGS_ACTOR, APP_SETTINGS
+from config.config_test import MYSQL_SETTINGS_ACTOR, APP_SETTINGS, MYSQL_SETTINGS
 from plugins_test.plugin_test import statistic, CLICKHOUSE_SETTINGS_ACTOR
 from src.tools import get_health_answer, get_gtid_diff
 
@@ -152,7 +152,7 @@ def test_engine_pipeline_advanced():
     #leads_count = 2
 
     generate_init_load(db_name, leads_count)
-    engine_thread = start_engine()
+    engine_thread = start_engine(MYSQL_SETTINGS, APP_SETTINGS)
     generate_load(db_name, leads_count)
 
     time.sleep(2)
@@ -169,7 +169,7 @@ def test_engine_pipeline_advanced():
 
 
     generate_load(db_name, leads_count)
-    engine_thread = start_engine()
+    engine_thread = start_engine(MYSQL_SETTINGS, APP_SETTINGS)
     time.sleep(2)
     logger.debug(f"stop thread")
     answer = get_health_answer(APP_SETTINGS['health_socket'])

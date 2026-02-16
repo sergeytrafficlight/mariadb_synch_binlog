@@ -392,8 +392,8 @@ def full_regeneration(cursor, mysql_settings, app_settings, binlog):
 
     USER_FUNC.finished_full_regeneration()
 
-def run():
-    from config.config import MYSQL_SETTINGS, APP_SETTINGS
+def run(MYSQL_SETTINGS, APP_SETTINGS):
+
     global USER_FUNC, STAGE
     init(MYSQL_SETTINGS, APP_SETTINGS)
 
