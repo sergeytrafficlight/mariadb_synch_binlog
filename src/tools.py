@@ -72,8 +72,11 @@ class regeneration_threads_controller:
 
         def __init__(self):
             self.current_id = None
+
             self.rows_count = 0
             self.rows_parsed = 0
+
+            self.max_id = 0
 
     def __init__(self, threads_count):
         self.tables = {}
@@ -95,7 +98,15 @@ class regeneration_threads_controller:
         with self.lock:
             self.tables[table].rows_parsed += count
 
-    def put_rows_count(self, table, count, min_id):
+    def is_end(self, table):
+        with self.lock:
+            return self.tables[table].current_id >= self.tables[table].max_id
+
+    def put_rows_count(self, table, count, min_id, max_id):
+        if min_id is None:
+            min_id = 0
+        if max_id is None:
+            max_id = 0
         with self.lock:
             if table not in self.tables:
                 self.tables[table] = self.table_info()
@@ -103,6 +114,9 @@ class regeneration_threads_controller:
                 self.tables[table].rows_count = count
             if self.tables[table].current_id is None or min_id < self.tables[table].current_id:
                 self.tables[table].current_id = min_id
+            if max_id > self.tables[table].max_id:
+                self.tables[table].max_id = max_id
+
 
 
     def statistic(self):

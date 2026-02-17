@@ -6,6 +6,7 @@ import logging
 import socket
 import threading
 import importlib
+import sys
 import json
 from enum import Enum
 from pymysqlreplication import BinLogStreamReader
@@ -26,6 +27,14 @@ if not logger.handlers:
     )
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
+
+def thread_exception_handler(args):
+    # args.exc_type, args.exc_value, args.exc_traceback
+    print(f"❌ Thread {args.thread.name} crashed:", args.exc_value)
+    # Завершаем весь процесс
+    sys.exit(1)
+
+threading.excepthook = thread_exception_handler
 
 class Stage(Enum):
     INIT = 'INIT'
@@ -341,16 +350,17 @@ def full_regeneration_thread(mysql_settings, app_settings):
         # this is redundant but ensures we get maximum row count
         #   for high-load tables where each thread may have snapshots at different row counts
         # this data is needed for health server to report total row count
-        q = f"SELECT COUNT(*) as cnt, MIN(id) as min_id FROM {db_name}.{table};"
+        q = f"SELECT COUNT(*) as cnt, MIN(id) as min_id, MAX(id) as max_id FROM {db_name}.{table};"
 
         cursor.execute(q)
         r = cursor.fetchall()
         count = r[0]['cnt']
         min_id = r[0]['min_id']
-        logger.debug(f"{q} count: {count} min_id: {min_id}")
+        max_id = r[0]['max_id']
+        logger.debug(f"{q} count: {count} min_id: {min_id} max_id: {max_id}")
 
 
-        REGENERATION_CONTROLLER.put_rows_count(table, count, min_id)
+        REGENERATION_CONTROLLER.put_rows_count(table, count, min_id, max_id)
 
     REGENERATION_CONTROLLER.barrier.wait()
 
@@ -366,7 +376,10 @@ def full_regeneration_thread(mysql_settings, app_settings):
             count = len(result)
             logger.debug(f"Query: {q} count: {count}")
             if not count:
-                break
+                if REGENERATION_CONTROLLER.is_end(table):
+                    break
+                else:
+                    continue
             for r in result:
                 USER_FUNC.process_event('insert', db_name, table, r)
 
