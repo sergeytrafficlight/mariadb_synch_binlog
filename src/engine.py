@@ -9,6 +9,7 @@ import importlib
 import sys
 import json
 from enum import Enum
+import traceback
 from pymysqlreplication import BinLogStreamReader
 from pymysqlreplication.row_event import WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent
 from pymysqlreplication.event import MariadbGtidEvent, XidEvent, QueryEvent
@@ -32,6 +33,13 @@ def thread_exception_handler(args):
     # args.exc_type, args.exc_value, args.exc_traceback
     print(f"❌ Thread {args.thread.name} crashed:", args.exc_value)
     # Завершаем весь процесс
+
+    traceback.print_exception(
+        args.exc_type,
+        args.exc_value,
+        args.exc_traceback
+    )
+    
     sys.exit(1)
 
 threading.excepthook = thread_exception_handler
