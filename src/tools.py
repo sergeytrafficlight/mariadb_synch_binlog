@@ -157,6 +157,10 @@ class insert_buffer:
         with self.lock:
             return len(self.items) > self.triggering_rows_count
 
+    def len(self):
+        with self.lock:
+            return len(self.items)
+
     def get_similar_pack_clear(self):
         with self.lock:
             if not len(self.items):
