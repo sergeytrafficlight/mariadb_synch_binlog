@@ -51,9 +51,16 @@ statistic = statistic_class()
 version_id = 1
 insert_storage = None
 insert_storage_max_size = 1_000_000
+binlog_position_save_function_ptr = None
+emulate_error = False
+
+def set_emulate_error(v):
+    global emulate_error
+    emulate_error = v
 
 
 def _push_to_clickhouse(storage):
+    global emulate_error
     logger.debug("push to clickhouse")
     client = clickhouse_connect.get_client(
         host=CLICKHOUSE_SETTINGS_ACTOR["host"],
@@ -75,13 +82,20 @@ def _push_to_clickhouse(storage):
             data=[p.values for p in pack]
         )
 
+        if emulate_error:
+            raise Exception(f"Emulate error")
+
+        #print(f"call to save {pack[-1].binlog}")
+        binlog_position_save_function_ptr(pack[-1].binlog)
+
     client.close()
 
 
-def init():
-    global statistic, clickhouse_connectors, insert_storage
+def init(binlog_position_save_function):
+    global statistic, clickhouse_connectors, insert_storage, binlog_position_save_function_ptr
     statistic.init += 1
     insert_storage = insert_buffer(insert_storage_max_size)
+    binlog_position_save_function_ptr = binlog_position_save_function
     logger.debug("INIT")
 
 
@@ -127,7 +141,7 @@ def tear_down():
     logger.debug("DEINIT")
 
 
-def process_event(event_type, schema, table, event):
+def process_event(event_type, schema, table, event, binlog):
     # In full regeneration mode, this code may be executed in multiple threads.
     # In sync mode, it is executed in a single-threaded context.
     # print(f"Event type: {event_type}, schema: {schema}, table: {table}, event: {event}")
@@ -151,7 +165,7 @@ def process_event(event_type, schema, table, event):
         columns = list(event.keys())
         values = [event[col] for col in columns]
 
-        insert_storage.push(table, columns, values)
+        insert_storage.push(table, columns, values, binlog)
 
         # I intentionally ignore multithreading here.
         # During the full regeneration phase, multithreading does not make much sense for this logic.
@@ -170,7 +184,7 @@ def process_event(event_type, schema, table, event):
         columns = list(after.keys())
         values = [ after[col] for col in columns ]
 
-        insert_storage.push(table, columns, values)
+        insert_storage.push(table, columns, values, binlog)
 
     elif event_type == 'delete':
         statistic.process_event_delete += 1
@@ -183,7 +197,7 @@ def process_event(event_type, schema, table, event):
         columns = list(deleted_record.keys())
         values = [deleted_record[col] for col in columns]
 
-        insert_storage.push(table, columns, values)
+        insert_storage.push(table, columns, values, binlog)
 
 
     else:

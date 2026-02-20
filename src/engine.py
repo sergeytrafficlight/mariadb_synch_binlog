@@ -83,6 +83,10 @@ FORBIDDEN = {
     "DROP", "ALTER", "CREATE", "TRUNCATE"
 }
 
+def save_binlog_position(binlog):
+    #print(f"save binlog: {binlog}")
+    assert binlog.save()
+
 
 def handle_stop(signum, frame):
     global STOP, LAST_SIGINT, user_func
@@ -209,6 +213,7 @@ def preflight_check(cursor, mysql_settings, app_settings):
     if len(app_settings.get('scan_tables', [])):
         check_tables(cursor, app_settings['db_name'], app_settings['scan_tables'])
 
+
 def start_binlog_consumer(mysql_settings, app_settings, binlog):
     global USER_FUNC, GTID, GLOBAL_LOCK, STAGE
 
@@ -238,6 +243,8 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
 
     logger.info(f"🚀 Binlog consumer started. Synch with [{app_settings['db_name']}] . Waiting for events...")
 
+    #print(f"start from {binlog}")
+
     try:
 
         while not STOP:
@@ -256,25 +263,33 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
                     USER_FUNC.XidEvent()
                     binlog.file = binlog_stream.log_file
                     binlog.pos = event.packet.log_pos
-                    logger.debug(f"save binlog {binlog}")
-                    assert binlog.save()
+                    #print(f"xid: {binlog}")
+                    #logger.debug(f"save binlog {binlog}")
+                    #assert binlog.save()
+
 
                 elif isinstance(event, (WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent)):
                     schema = event.schema
                     table = event.table
                     for row in event.rows:
+                        #binlog.file = binlog_stream.log_file
+                        #binlog.pos = event.packet.log_pos
+                        #print(f"binlog: {binlog}")
 
                         if isinstance(event, WriteRowsEvent):
-                            USER_FUNC.process_event('insert', schema, table, row['values'])
+                            USER_FUNC.process_event('insert', schema, table, row['values'], binlog)
                         elif isinstance(event, UpdateRowsEvent):
-                            USER_FUNC.process_event('update', schema, table, row)
+                            USER_FUNC.process_event('update', schema, table, row, binlog)
                         elif isinstance(event, DeleteRowsEvent):
-                            USER_FUNC.process_event('delete', schema, table, row)
+                            USER_FUNC.process_event('delete', schema, table, row, binlog)
 
             time.sleep(0.2)
 
     finally:
         binlog_stream.close()
+        return
+
+    print(f"CONSUMER STOPPED")
 
 def health_server(socket_path, mysql_settings):
 
@@ -389,7 +404,7 @@ def full_regeneration_thread(mysql_settings, app_settings):
                 else:
                     continue
             for r in result:
-                USER_FUNC.process_event('insert', db_name, table, r)
+                USER_FUNC.process_event('insert', db_name, table, r, None)
 
             REGENERATION_CONTROLLER.add_parsed_count(table, count)
 
@@ -423,7 +438,7 @@ def full_regeneration(cursor, mysql_settings, app_settings, binlog):
 
 def run(MYSQL_SETTINGS, APP_SETTINGS):
 
-    global USER_FUNC, STAGE
+    global USER_FUNC, STAGE,STOP
     init(MYSQL_SETTINGS, APP_SETTINGS)
 
     health_thread = None
@@ -440,7 +455,7 @@ def run(MYSQL_SETTINGS, APP_SETTINGS):
         health_thread.start()
 
 
-        USER_FUNC.init()
+        USER_FUNC.init(save_binlog_position)
 
         if not binlog.load():
             logger.debug(f"need full regeneration")
@@ -451,6 +466,9 @@ def run(MYSQL_SETTINGS, APP_SETTINGS):
 
 
         start_binlog_consumer(MYSQL_SETTINGS, APP_SETTINGS, binlog)
+
+        STOP = True
+
 
     finally:
         if conn:

@@ -18,6 +18,12 @@ class binlog_file:
     def __str__(self):
         return f"file: {self.file} pos: {self.pos}"
 
+    def __eq__(self, other):
+        return self.file == other.file and self.pos == other.pos
+
+    def __ne__(self, other):
+        return not self == other
+
     def load(self):
         if not os.path.exists(self.file_path):
             return False
@@ -132,10 +138,11 @@ class regeneration_threads_controller:
 
 class insert_item:
 
-    def __init__(self, table_name: str, keys: [], values: []):
+    def __init__(self, table_name: str, keys: [], values: [], binlog):
         self.table_name = table_name
         self.keys = keys
         self.values = values
+        self.binlog = binlog
 
 
 class insert_buffer:
@@ -146,11 +153,11 @@ class insert_buffer:
         self.triggering_rows_count = triggering_rows_count
         self.items = []
 
-    def push(self, table, columns, data) -> bool:
+    def push(self, table, columns, data, binlog) -> bool:
         #return triggered
 
         with self.lock:
-            self.items.append(insert_item(table, columns, data))
+            self.items.append(insert_item(table, columns, data, binlog))
             return len(self.items) > self.triggering_rows_count
 
     def overload(self):
@@ -162,20 +169,19 @@ class insert_buffer:
             return len(self.items)
 
     def get_similar_pack_clear(self):
+
         with self.lock:
             if not len(self.items):
                 return []
 
-
             pack = []
 
             for i, item in enumerate(self.items):
-                if i == 0:
-                    pack.append(item)
-                    continue
-                if pack[0].table_name != item.table_name or pack[0].keys != item.keys:
-                    break
+                if len(pack):
+                    if pack[0].table_name != item.table_name or pack[0].keys != item.keys:
+                        break
                 pack.append(item)
+
 
             del self.items[:len(pack)]
             return pack
