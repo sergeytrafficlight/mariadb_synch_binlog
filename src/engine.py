@@ -187,6 +187,7 @@ def preflight_check(cursor, mysql_settings, app_settings):
 
         finally:
             stream.close()
+            return
 
     def check_tables(cursor, db_name, tables):
 
@@ -354,6 +355,7 @@ def health_server(socket_path, mysql_settings):
         if os.path.exists(socket_path):
             os.remove(socket_path)
         logger.info("🔴 Health server stopped")
+        return
 
 
 def full_regeneration_thread(mysql_settings, app_settings):
@@ -477,3 +479,4 @@ def run(MYSQL_SETTINGS, APP_SETTINGS):
             health_thread.join()
 
         USER_FUNC.tear_down()
+        return
