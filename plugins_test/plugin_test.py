@@ -1,9 +1,10 @@
 import clickhouse_connect
 import threading
+import time
 import logging
 from src.tools import insert_buffer
 logger = logging.getLogger(__name__)
-#logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.DEBUG)
 
 CLICKHOUSE_SETTINGS_ACTOR = {
     "host": "127.0.0.1",
@@ -83,9 +84,9 @@ def _push_to_clickhouse(storage):
         )
 
         if emulate_error:
+            logger.debug("Emulate error")
             raise Exception(f"Emulate error")
 
-        #print(f"call to save {pack[-1].binlog}")
         binlog_position_save_function_ptr(pack[-1].binlog)
 
     client.close()

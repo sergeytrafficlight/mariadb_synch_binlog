@@ -2,6 +2,7 @@ import os
 import re
 import json
 import socket
+import time
 
 import importlib
 import threading
@@ -227,3 +228,32 @@ def get_gtid_diff(gtid_a, gtid_b):
             result += seq_b - seq_a
 
     return result
+
+def start(MYSQL_SETTINGS, APP_SETTINGS, as_thread=True):
+
+    from src.engine import run
+
+    if as_thread:
+
+        thread = threading.Thread(
+            target=run,
+            daemon=True,
+            args=(MYSQL_SETTINGS, APP_SETTINGS,)
+        )
+
+        thread.start()
+        time.sleep(1)  # дать подняться бинлог-стримеру
+
+        return thread
+    else:
+
+        return run(MYSQL_SETTINGS, APP_SETTINGS)
+
+def stop(thread, wait_interval_s = 20):
+    from src.engine import stop
+    stop()
+
+    thread.join(wait_interval_s)
+
+
+

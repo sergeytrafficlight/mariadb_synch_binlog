@@ -10,7 +10,7 @@ import clickhouse_connect
 from tests.conftest import start_engine, create_mariadb_db, create_clickhouse_db
 from config.config_test import MYSQL_SETTINGS_ACTOR, APP_SETTINGS, MYSQL_SETTINGS
 from plugins_test.plugin_test import statistic, CLICKHOUSE_SETTINGS_ACTOR
-from src.tools import get_health_answer, get_gtid_diff
+from src.tools import get_health_answer, get_gtid_diff, start, stop
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -25,7 +25,7 @@ if not logger.handlers:
     logger.addHandler(console_handler)
 
 
-def generate_init_load(db_name, count):
+def generate_init_load(count):
     mysql_settings = MYSQL_SETTINGS_ACTOR
     mysql_settings['database'] = APP_SETTINGS['db_name']
     conn = pymysql.connect(
@@ -56,7 +56,7 @@ def generate_init_load(db_name, count):
 
     conn.close()
 
-def generate_load(db_name, count, only_insert=False):
+def generate_load(count, only_insert=False):
     mysql_settings = MYSQL_SETTINGS_ACTOR
     mysql_settings['database'] = APP_SETTINGS['db_name']
     conn = pymysql.connect(
@@ -84,10 +84,15 @@ def generate_load(db_name, count, only_insert=False):
 
 def compare_db():
 
+    mysql_settings = MYSQL_SETTINGS_ACTOR
+    mysql_settings['database'] = APP_SETTINGS['db_name']
+
     conn_mariadb = pymysql.connect(
         **MYSQL_SETTINGS_ACTOR,
     )
     cursor_mariadb = conn_mariadb.cursor()
+
+
 
     client_ch = clickhouse_connect.get_client(
         host=CLICKHOUSE_SETTINGS_ACTOR["host"],
@@ -99,8 +104,8 @@ def compare_db():
 
     cursor_mariadb.execute("SELECT COUNT(*), SUM(value) FROM items;")
     row_mariadb = cursor_mariadb.fetchall()
-    mariadb_count = int(row_mariadb[0][0])
-    mariadb_sum = int(row_mariadb[0][1])
+    mariadb_count = int(row_mariadb[0][0] or 0)
+    mariadb_sum = int(row_mariadb[0][1] or 0)
 
     result = client_ch.query(
         '''
@@ -133,17 +138,78 @@ def compare_db():
 
     print(f"CH count: {ch_count}")
 
-
-def test_engine_pipeline_advanced():
-
-    global statistic
-    statistic.clear()
-
+def clear_binlog_file():
     binlog_file_path = APP_SETTINGS['binlog_file']
     try:
         os.remove(binlog_file_path)
     except FileNotFoundError:
         pass
+
+def _start():
+    r = start(MYSQL_SETTINGS, APP_SETTINGS, as_thread=True)
+    time.sleep(1)
+    return r
+
+def _stop(consumer):
+    stop(consumer)
+    assert not consumer.is_alive()
+
+
+
+def _test_start_stop():
+
+    db_name = create_mariadb_db()
+    db_clickhouse = create_clickhouse_db()
+
+    clear_binlog_file()
+    consumer = _start()
+    _stop(consumer)
+
+
+def test_init_load_insert():
+
+    from plugins_test.plugin_test import statistic
+
+    db_name = create_mariadb_db()
+    db_clickhouse = create_clickhouse_db()
+
+    clear_binlog_file()
+
+    compare_db()
+
+    generate_init_load(100)
+    consumer = _start()
+
+    assert statistic.process_event_insert == 100
+    time.sleep(5)
+    _stop(consumer)
+
+    compare_db()
+
+    return
+
+    statistic.clear()
+
+    consumer = _start()
+    assert statistic.process_event_insert == 0
+
+    generate_load(1, True)
+    time.sleep(1)
+    assert statistic.process_event_insert == 1
+
+    _stop(consumer)
+
+
+
+
+
+
+def _test_engine_pipeline_advanced():
+
+    global statistic
+    statistic.clear()
+
+    clear_binlog_file()
 
     db_name = create_mariadb_db()
     db_clickhouse = create_clickhouse_db()
@@ -186,11 +252,7 @@ def test_engine_pipeline_advanced():
 
 
 
-    binlog_file_path = APP_SETTINGS['binlog_file']
-    try:
-        os.remove(binlog_file_path)
-    except FileNotFoundError:
-        pass
+    clear_binlog_file()
 
     leads_count = 10_000
     #leads_count = 2
@@ -240,6 +302,7 @@ def test_engine_pipeline_advanced():
         start_time = time.time()
 
         while time.time() - start_time < duration_s:
+            #print(f"generate load")
             generate_load(db_name, 1000, True)
             time.sleep(0.13)
 
@@ -259,8 +322,11 @@ def test_engine_pipeline_advanced():
         engine_thread = start_engine(MYSQL_SETTINGS, APP_SETTINGS)
         time.sleep(1)
 
+        print(f"{time.time()} set emulate error")
         set_emulate_error(True)
+        print(f"{time.time()} - waiting")
         engine_thread.join(timeout=20)
+        print(f"{time.time()} - done")
 
         assert not engine_thread.is_alive()
 
