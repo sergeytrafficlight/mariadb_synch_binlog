@@ -11,6 +11,7 @@ from tests.conftest import start_engine, create_mariadb_db, create_clickhouse_db
 from config.config_test import MYSQL_SETTINGS_ACTOR, APP_SETTINGS, MYSQL_SETTINGS
 from plugins_test.plugin_test import statistic, CLICKHOUSE_SETTINGS_ACTOR
 from src.tools import get_health_answer, get_gtid_diff, start, stop
+from plugins_test.plugin_test import set_emulate_error
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -38,12 +39,12 @@ def generate_init_load(count):
         #logger.debug(f"insert init {name}")
         cursor.execute(
             "INSERT INTO items (name, value) VALUES (%s, %s)",
-            (name, i),
+            (name, i+1),
         )
 
         cursor.execute(
             "INSERT INTO items2 (name, value) VALUES (%s, %s)",
-            (name, i),
+            (name, i+1),
         )
 
     cursor.execute("UPDATE items SET value = value + 100")
@@ -69,11 +70,11 @@ def generate_load(count, only_insert=False):
         #logger.debug(f"insert load {name}")
         cursor.execute(
             "INSERT INTO items (name, value) VALUES (%s, %s)",
-            (name, i),
+            (name, i+1),
         )
         cursor.execute(
             "INSERT INTO items2 (name, value) VALUES (%s, %s)",
-            (name, i),
+            (name, i+1),
         )
 
     if not only_insert:
@@ -82,7 +83,7 @@ def generate_load(count, only_insert=False):
     conn.commit()
     conn.close()
 
-def compare_db():
+def compare_db(equal = True):
 
     mysql_settings = MYSQL_SETTINGS_ACTOR
     mysql_settings['database'] = APP_SETTINGS['db_name']
@@ -130,13 +131,15 @@ def compare_db():
     ch_count = int(result['count_rows'])
     ch_sum = int(result['sum_rows'])
 
-    assert mariadb_count == ch_count
-    assert mariadb_sum == ch_sum
+    if equal:
+        assert mariadb_count == ch_count
+        assert mariadb_sum == ch_sum
+    else:
+        assert mariadb_count != ch_count
+        assert mariadb_sum != ch_sum
 
     conn_mariadb.close()
     client_ch.close()
-
-    print(f"CH count: {ch_count}")
 
 def clear_binlog_file():
     binlog_file_path = APP_SETTINGS['binlog_file']
@@ -156,7 +159,7 @@ def _stop(consumer):
 
 
 
-def _test_start_stop():
+def test_start_stop():
 
     db_name = create_mariadb_db()
     db_clickhouse = create_clickhouse_db()
@@ -169,6 +172,7 @@ def _test_start_stop():
 def test_init_load_insert():
 
     from plugins_test.plugin_test import statistic
+    statistic.clear()
 
     db_name = create_mariadb_db()
     db_clickhouse = create_clickhouse_db()
@@ -180,13 +184,13 @@ def test_init_load_insert():
     generate_init_load(100)
     consumer = _start()
 
+    assert statistic.initiate_full_regeneration == 1
     assert statistic.process_event_insert == 100
     time.sleep(5)
     _stop(consumer)
 
     compare_db()
 
-    return
 
     statistic.clear()
 
@@ -194,17 +198,38 @@ def test_init_load_insert():
     assert statistic.process_event_insert == 0
 
     generate_load(1, True)
+
     time.sleep(1)
     assert statistic.process_event_insert == 1
 
     _stop(consumer)
 
+    compare_db()
+
+    statistic.clear()
+
+    consumer = _start()
+    assert statistic.process_event_insert == 0
+
+    #generate error
+    set_emulate_error(True)
+
+    generate_load(1, True)
+
+    _stop(consumer)
+    compare_db(equal=False)
+
+    set_emulate_error(False)
+
+    consumer = _start()
+
+    _stop(consumer)
+
+    compare_db()
 
 
 
-
-
-def _test_engine_pipeline_advanced():
+def test_engine_stresstest():
 
     global statistic
     statistic.clear()
@@ -214,96 +239,22 @@ def _test_engine_pipeline_advanced():
     db_name = create_mariadb_db()
     db_clickhouse = create_clickhouse_db()
 
-    client_ch = clickhouse_connect.get_client(
-        host=CLICKHOUSE_SETTINGS_ACTOR["host"],
-        port=CLICKHOUSE_SETTINGS_ACTOR["port"],
-        username=CLICKHOUSE_SETTINGS_ACTOR["user"],
-        password=CLICKHOUSE_SETTINGS_ACTOR["password"],
-        database=CLICKHOUSE_SETTINGS_ACTOR["database"],
-    )
+    consumer = _start()
 
-    result = client_ch.query(
-        '''
-        SELECT
-            COUNT(*) as count_rows,
-            SUM(value) as sum_rows
-        FROM
-        (
-            SELECT
-                argMax(value, version) AS value,
-                argMax(deleted, version) AS deleted
-            FROM items
-            GROUP BY id
-        )       
-        WHERE deleted = 0 
-        '''
-    )
-
-    result = result.named_results()
-    result = next(result)
-
-    ch_count = int(result['count_rows'])
-    ch_sum = int(result['sum_rows'])
-
-    assert ch_count == 0
-    assert ch_sum == 0
-
-    client_ch.close()
-
-
-
-    clear_binlog_file()
-
-    leads_count = 10_000
-    #leads_count = 2
-
-    generate_init_load(db_name, leads_count)
-    engine_thread = start_engine(MYSQL_SETTINGS, APP_SETTINGS)
-    generate_load(db_name, leads_count)
-
-    time.sleep(2)
-
-    answer = get_health_answer(APP_SETTINGS['health_socket'])
-    print(f"answer: {answer}")
-
-    assert answer['init_rows_total'] == leads_count * 2
-    assert answer['init_rows_parsed'] == leads_count * 2
-
-    os.kill(os.getpid(), signal.SIGINT)
-    engine_thread.join(timeout=20)
-    assert not engine_thread.is_alive()
-
-
-    generate_load(db_name, leads_count)
-    engine_thread = start_engine(MYSQL_SETTINGS, APP_SETTINGS)
-    time.sleep(2)
-    logger.debug(f"stop thread")
-    answer = get_health_answer(APP_SETTINGS['health_socket'])
-    os.kill(os.getpid(), signal.SIGINT)
-    engine_thread.join(timeout=10)
-    logger.debug("join done")
-
-    print(f"answer: {answer}")
-    assert not engine_thread.is_alive()
-
-    #assert statistic.process_event_insert == leads_count * 3
-    assert statistic.initiate_synch_mode == 2
-    assert statistic.tear_down == 2
+    time.sleep(1)
     assert statistic.initiate_full_regeneration == 1
-    assert statistic.finished_full_regeneration == 1
 
+    compare_db()
 
+    set_emulate_error(False)
 
-
-    #and nooowww lets stress test
-
-    stress_test_duration_s = 20
+    stress_test_duration_s = 60
     def _stress_load_thread(duration_s):
         start_time = time.time()
 
         while time.time() - start_time < duration_s:
             #print(f"generate load")
-            generate_load(db_name, 1000, True)
+            generate_load(100, True)
             time.sleep(0.13)
 
     t_list = []
@@ -314,35 +265,34 @@ def _test_engine_pipeline_advanced():
         t_list.append(t)
 
     start_time = time.time()
-    from plugins_test.plugin_test import set_emulate_error
-    while time.time() - start_time < stress_test_duration_s:
 
+    _stop(consumer)
+
+    print(f"Generating errors")
+    while time.time() - start_time < stress_test_duration_s:
+        statistic.clear()
+        consumer = _start()
+        set_emulate_error(True)
+        time.sleep(1)
+        _stop(consumer)
         set_emulate_error(False)
 
-        engine_thread = start_engine(MYSQL_SETTINGS, APP_SETTINGS)
-        time.sleep(1)
+        assert statistic.initiate_full_regeneration == 0
 
-        print(f"{time.time()} set emulate error")
-        set_emulate_error(True)
-        print(f"{time.time()} - waiting")
-        engine_thread.join(timeout=20)
-        print(f"{time.time()} - done")
-
-        assert not engine_thread.is_alive()
+        print(f'Emulate error, timer: {(time.time() - start_time)} of {stress_test_duration_s}')
 
 
-        time.sleep(1)
 
-
+    print(f"Waiting for threads")
     for t in t_list:
         t.join()
 
 
     #waiting for gtid lag == 0
     set_emulate_error(False)
-    engine_thread = start_engine(MYSQL_SETTINGS, APP_SETTINGS)
-    time.sleep(1)
+    consumer = _start()
 
+    print(f"Waiting for lag == 0")
     while True:
         time.sleep(1)
         answer = get_health_answer(APP_SETTINGS['health_socket'])
@@ -351,15 +301,8 @@ def _test_engine_pipeline_advanced():
         if not lag:
             break
 
-
-
-    os.kill(os.getpid(), signal.SIGINT)
-    engine_thread.join(timeout=10)
-    assert not engine_thread.is_alive()
-
+    _stop(consumer)
     compare_db()
-
-
 
 
 def test_gtid_diff():

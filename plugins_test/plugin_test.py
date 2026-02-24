@@ -4,7 +4,7 @@ import time
 import logging
 from src.tools import insert_buffer
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+#logger.setLevel(logging.DEBUG)
 
 CLICKHOUSE_SETTINGS_ACTOR = {
     "host": "127.0.0.1",
@@ -77,17 +77,20 @@ def _push_to_clickhouse(storage):
         logger.debug(f"Drop to CH {len(pack)}")
         if not len(pack):
             break
-        client.insert(
-            table=pack[0].table_name,
-            column_names=pack[0].keys,
-            data=[p.values for p in pack]
-        )
 
-        if emulate_error:
+        if not emulate_error:
+            client.insert(
+                table=pack[0].table_name,
+                column_names=pack[0].keys,
+                data=[p.values for p in pack]
+            )
+
+            binlog_position_save_function_ptr(pack[-1].binlog)
+        else:
             logger.debug("Emulate error")
             raise Exception(f"Emulate error")
 
-        binlog_position_save_function_ptr(pack[-1].binlog)
+
 
     client.close()
 
@@ -107,8 +110,9 @@ def initiate_full_regeneration():
 
 def finished_full_regeneration():
     #print('initiate_full_regeneration')
-    global statistic
+    global statistic, insert_storage
     statistic.finished_full_regeneration +=1
+    _push_to_clickhouse(insert_storage)
 
 def initiate_synch_mode():
     #print('initiate_synch_mode')
@@ -211,4 +215,5 @@ def process_event(event_type, schema, table, event, binlog):
 
 def XidEvent():
     logger.debug("XidEvent")
+    global insert_storage
     _push_to_clickhouse(insert_storage)

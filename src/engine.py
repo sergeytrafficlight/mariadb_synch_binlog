@@ -259,11 +259,11 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
                     pass
 
                 elif isinstance(event, XidEvent):
-                    print(f"XID!!!!!")
+
                     logger.debug(f'got xidevent')
-                    USER_FUNC.XidEvent()
                     binlog.file = binlog_stream.log_file
                     binlog.pos = event.packet.log_pos
+                    USER_FUNC.XidEvent()
 
 
                 elif isinstance(event, (WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent)):
