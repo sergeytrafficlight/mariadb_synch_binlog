@@ -85,7 +85,9 @@ FORBIDDEN = {
 
 def save_binlog_position(binlog):
     logger.debug(f"save binlog {binlog}")
-    assert binlog.save()
+    if binlog:
+        #print(f"save binlog {binlog}")
+        assert binlog.save()
 
 
 def handle_stop(signum, frame):
@@ -406,7 +408,7 @@ def full_regeneration(cursor, mysql_settings, app_settings, binlog):
     binlog.pos = r[0][1]
     '''
 
-    assert binlog.save()
+    #assert binlog.save()
 
     threads = []
 
@@ -419,6 +421,7 @@ def full_regeneration(cursor, mysql_settings, app_settings, binlog):
         t.join()
 
     USER_FUNC.finished_full_regeneration()
+    assert binlog.save()
 
 def run(MYSQL_SETTINGS, APP_SETTINGS):
 
@@ -426,7 +429,7 @@ def run(MYSQL_SETTINGS, APP_SETTINGS):
     init(MYSQL_SETTINGS, APP_SETTINGS)
 
     health_thread = None
-    conn = None
+
     try:
         conn = pymysql.connect(**MYSQL_SETTINGS)
         cursor = conn.cursor()

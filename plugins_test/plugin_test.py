@@ -97,10 +97,11 @@ def _push_to_clickhouse(storage):
 
 def init(binlog_position_save_function):
     global statistic, clickhouse_connectors, insert_storage, binlog_position_save_function_ptr
+    logger.debug("INIT")
     statistic.init += 1
     insert_storage = insert_buffer(insert_storage_max_size)
     binlog_position_save_function_ptr = binlog_position_save_function
-    logger.debug("INIT")
+
 
 
 def initiate_full_regeneration():
@@ -109,7 +110,15 @@ def initiate_full_regeneration():
     statistic.initiate_full_regeneration +=1
 
 def finished_full_regeneration():
-    #print('initiate_full_regeneration')
+    """Wait for all full regeneration operations to complete before returning.
+
+    Important: This function must block until all full regeneration operations
+    have finished. Only after that should it return.
+
+    Once this function returns, the engine will save the binlog position.
+    This allows skipping the full regeneration procedure in the future.
+    """
+
     global statistic, insert_storage
     statistic.finished_full_regeneration +=1
     _push_to_clickhouse(insert_storage)
