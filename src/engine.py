@@ -13,7 +13,7 @@ import traceback
 from pymysqlreplication import BinLogStreamReader
 from pymysqlreplication.row_event import WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent
 from pymysqlreplication.event import MariadbGtidEvent, XidEvent, QueryEvent
-from src.tools import binlog_file, plugin_wrapper, regeneration_threads_controller, get_gtid_diff
+from src.tools import binlog_file, plugin_wrapper, regeneration_threads_controller, get_binlog_diff, get_binlog_from_db
 
 logging.getLogger("pymysqlreplication").setLevel(logging.ERROR)
 
@@ -286,21 +286,7 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
         return
 
 
-def health_server(socket_path, mysql_settings):
-
-    def get_current_gtid():
-        conn = pymysql.connect(**mysql_settings)
-        cursor = conn.cursor()
-
-        cursor.execute("SELECT @@GLOBAL.gtid_current_pos;")
-        r = cursor.fetchall()
-        if r:
-            r = r[0][0]
-        else:
-            r = []
-        conn.close()
-        return r
-
+def health_server(socket_path, mysql_settings, app_settings):
 
     global STOP, GLOBAL_LOCK, REGENERATION_CONTROLLER, STAGE
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -322,24 +308,22 @@ def health_server(socket_path, mysql_settings):
             except socket.timeout:
                 continue
             with conn:
-                try:
-                    current_gtid = get_current_gtid()
-                    error = None
-                except Exception as e:
-                    current_gtid = None
-                    error = str(e)
+                binlog_db = get_binlog_from_db(mysql_settings, app_settings)
+                binlog_saved = binlog_file(file_path=app_settings['binlog_file'])
+                if not binlog_saved.load():
+                    binlog_saved = None
 
                 with GLOBAL_LOCK:
                     init_rows_total, init_rows_parsed = REGENERATION_CONTROLLER.statistic()
                     response = {
-                        "status": "ok" if error is None else "error",
+                        "status": "ok",
                         "stage": str(STAGE),
                         "init_rows_total": init_rows_total,
                         "init_rows_parsed": init_rows_parsed,
-                        "server_gtid": current_gtid,
-                        "consumer_gtid": GTID,
-                        "gtid_diff": get_gtid_diff(GTID, current_gtid),
-                        "error": error,
+                        "server_binlog": str(binlog_db),
+                        "consumer_binlog": str(binlog_saved),
+                        "binlog_diff": get_binlog_diff(binlog_saved, binlog_db),
+                        "error": '',
                     }
 
                 conn.sendall((json.dumps(response) + "\n").encode())
@@ -413,10 +397,14 @@ def full_regeneration(cursor, mysql_settings, app_settings, binlog):
     USER_FUNC.initiate_full_regeneration()
     STAGE = Stage.REGENERATION
 
+    binlog = get_binlog_from_db(mysql_settings, app_settings)
+
+    '''
     cursor.execute("SHOW MASTER STATUS;")
     r = cursor.fetchall()
     binlog.file = r[0][0]
     binlog.pos = r[0][1]
+    '''
 
     assert binlog.save()
 
@@ -447,7 +435,7 @@ def run(MYSQL_SETTINGS, APP_SETTINGS):
 
         binlog = binlog_file(APP_SETTINGS['binlog_file'])
 
-        health_thread = threading.Thread(target=health_server, daemon=True, args=(APP_SETTINGS['health_socket'], MYSQL_SETTINGS, ))
+        health_thread = threading.Thread(target=health_server, daemon=True, args=(APP_SETTINGS['health_socket'], MYSQL_SETTINGS, APP_SETTINGS,))
         health_thread.start()
 
         USER_FUNC.init(save_binlog_position)

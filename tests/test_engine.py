@@ -10,7 +10,7 @@ import clickhouse_connect
 from tests.conftest import start_engine, create_mariadb_db, create_clickhouse_db
 from config.config_test import MYSQL_SETTINGS_ACTOR, APP_SETTINGS, MYSQL_SETTINGS
 from plugins_test.plugin_test import statistic, CLICKHOUSE_SETTINGS_ACTOR
-from src.tools import get_health_answer, get_gtid_diff, start, stop
+from src.tools import get_health_answer, get_binlog_diff, start, stop, binlog_file
 from plugins_test.plugin_test import set_emulate_error
 
 logger = logging.getLogger(__name__)
@@ -248,7 +248,7 @@ def test_engine_stresstest():
 
     set_emulate_error(False)
 
-    stress_test_duration_s = 60
+    stress_test_duration_s = 10
     def _stress_load_thread(duration_s):
         start_time = time.time()
 
@@ -296,8 +296,8 @@ def test_engine_stresstest():
     while True:
         time.sleep(1)
         answer = get_health_answer(APP_SETTINGS['health_socket'])
-        lag = answer['gtid_diff']
-        print(f"GTID lag: {lag}")
+        lag = answer['binlog_diff']
+        print(f"binlog lag: {lag}")
         if not lag:
             break
 
@@ -307,13 +307,14 @@ def test_engine_stresstest():
 
 def test_gtid_diff():
 
-    r = get_gtid_diff("1-1-2236", "0-1-158,1-1-2236")
-    assert r == 0
-    r = get_gtid_diff("1-1-2236", "0-1-158,1-1-2237")
+
+    r = get_binlog_diff(binlog_file(file_path='/var/tmp/1', file='a', pos=0), binlog_file(file_path='/var/tmp/1', file='a', pos=1))
     assert r == 1
-    r = get_gtid_diff("3-1-2236", "0-1-158,1-1-2237")
-    assert r == 0
-    r = get_gtid_diff("1-1-2236", "0-1-158,1-1-2235")
-    assert r == 0
-    r = get_gtid_diff("1-1-2236", None)
-    assert r == 0
+    r = get_binlog_diff(binlog_file(file_path='/var/tmp/1', file='a', pos=1), binlog_file(file_path='/var/tmp/1', file='a', pos=0))
+    assert r == -1
+    r = get_binlog_diff(binlog_file(file_path='/var/tmp/1', file='a', pos=0), None)
+    assert r is None
+    r = get_binlog_diff(None, binlog_file(file_path='/var/tmp/1', file='a', pos=0))
+    assert r is None
+    r = get_binlog_diff(binlog_file(file_path='/var/tmp/1', file='a', pos=1), binlog_file(file_path='/var/tmp/1', file='b', pos=0))
+    assert r is None

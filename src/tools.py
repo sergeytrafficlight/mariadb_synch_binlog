@@ -3,7 +3,7 @@ import re
 import json
 import socket
 import time
-
+import pymysql
 import importlib
 import threading
 import clickhouse_connect
@@ -11,9 +11,9 @@ import clickhouse_connect
 
 class binlog_file:
 
-    def __init__(self, file_path):
-        self.file = None
-        self.pos = None
+    def __init__(self, file_path, file=None, pos=None):
+        self.file = file
+        self.pos = pos
         self.file_path = file_path
 
     def __str__(self):
@@ -196,38 +196,16 @@ def get_health_answer(socket_path):
     return json.loads(data.decode())
     #print(json.loads(data))
 
-def get_gtid_diff(gtid_a, gtid_b):
+def get_binlog_diff(binlog_a, binlog_b):
 
-    def parse_gtid(gtid):
-        r = {}
-        for g in gtid.split(','):
-            g = g.strip()
-            if not g:
-                continue
+    if binlog_a is None or binlog_b is None:
+        return None
 
-            d, _, s = g.split('-')
-            d = int(d)
-            s = int(s)
+    if binlog_a.file != binlog_b.file:
+        return None
 
-            r[d] = max(s, r.get(d, 0))
-        return r
 
-    if gtid_a is None or gtid_b is None:
-        return 0
-
-    a = parse_gtid(gtid_a)
-    b = parse_gtid(gtid_b)
-
-    result = 0
-
-    for domain, seq_b in b.items():
-        if domain not in a:
-            continue
-        seq_a = a[domain]
-        if seq_b > seq_a:
-            result += seq_b - seq_a
-
-    return result
+    return binlog_b.pos - binlog_a.pos
 
 def start(MYSQL_SETTINGS, APP_SETTINGS, as_thread=True):
 
@@ -255,5 +233,13 @@ def stop(thread, wait_interval_s = 20):
 
     thread.join(wait_interval_s)
 
+def get_binlog_from_db(MYSQL_SETTINGS, APP_SETTINGS):
+    conn = pymysql.connect(**MYSQL_SETTINGS)
+    cursor = conn.cursor()
+    cursor.execute("SHOW MASTER STATUS;")
+    r = cursor.fetchall()
 
+    binlog = binlog_file(file_path=APP_SETTINGS['binlog_file'], file=r[0][0], pos=r[0][1])
 
+    conn.close()
+    return binlog
