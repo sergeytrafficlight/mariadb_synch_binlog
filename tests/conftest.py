@@ -20,14 +20,14 @@ def fake_cursor():
     cursor = MagicMock()
     return cursor
 
-def create_mariadb_db():
+def create_mariadb_db(mysql_settings=MYSQL_SETTINGS_ACTOR, app_settings=APP_SETTINGS):
 
     conn = pymysql.connect(
-        **MYSQL_SETTINGS_ACTOR,
+        **mysql_settings,
     )
     cursor = conn.cursor()
 
-    db_name = APP_SETTINGS['db_name']
+    db_name = app_settings['db_name']
 
     cursor.execute(f"DROP DATABASE IF EXISTS {db_name}")
     cursor.execute(f"CREATE DATABASE {db_name}")
@@ -51,15 +51,15 @@ def create_mariadb_db():
 
     return db_name
 
-def create_clickhouse_db():
+def create_clickhouse_db(clickhouse_settings=CLICKHOUSE_SETTINGS_ACTOR):
 
-    db_name = CLICKHOUSE_SETTINGS_ACTOR["database"]
+    db_name = clickhouse_settings["database"]
 
     client = clickhouse_connect.get_client(
-        host=CLICKHOUSE_SETTINGS_ACTOR["host"],
-        port=CLICKHOUSE_SETTINGS_ACTOR["port"],
-        username=CLICKHOUSE_SETTINGS_ACTOR["user"],
-        password=CLICKHOUSE_SETTINGS_ACTOR["password"],
+        host=clickhouse_settings["host"],
+        port=clickhouse_settings["port"],
+        username=clickhouse_settings["user"],
+        password=clickhouse_settings["password"],
     )
 
     client.command(f"DROP DATABASE IF EXISTS {db_name}")

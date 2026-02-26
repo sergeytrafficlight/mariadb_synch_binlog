@@ -334,8 +334,13 @@ def health_server(socket_path, mysql_settings, app_settings):
                         "binlog_diff": get_binlog_diff(binlog_saved, PARSED_BINLOG_MY),
                         "error": '',
                     }
+                    try:
+                        conn.sendall((json.dumps(response) + "\n").encode())
+                    except socket.timeout:
+                        logger.warning("Send timeout")
+                    except (BrokenPipeError, ConnectionError) as e:
+                        logger.warning(f"Client disconnected: {e}")
 
-                conn.sendall((json.dumps(response) + "\n").encode())
     finally:
         server.close()
         if os.path.exists(socket_path):
