@@ -88,7 +88,6 @@ def _push_to_clickhouse(storage):
             binlog_position_save_function_ptr(pack[-1].binlog)
         else:
             logger.debug("Emulate error")
-            print(f"EMULATE ERROR!")
             raise Exception(f"Emulate error")
 
 
