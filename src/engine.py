@@ -402,7 +402,7 @@ def full_regeneration_thread(mysql_settings, app_settings):
 
 
 def full_regeneration(cursor, mysql_settings, app_settings, binlog):
-    global USER_FUNC, STAGE
+    global USER_FUNC, STAGE, PARSED_BINLOG_TOTAL, PARSED_BINLOG_MY
     USER_FUNC.initiate_full_regeneration()
     STAGE = Stage.REGENERATION
 
@@ -428,6 +428,9 @@ def full_regeneration(cursor, mysql_settings, app_settings, binlog):
         t.join()
 
     USER_FUNC.finished_full_regeneration()
+    
+    PARSED_BINLOG_TOTAL = binlog
+    PARSED_BINLOG_MY = binlog
     assert binlog.save()
 
 def run(MYSQL_SETTINGS, APP_SETTINGS):
