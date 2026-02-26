@@ -222,7 +222,10 @@ def process_event(event_type, schema, table, event, binlog):
         _push_to_clickhouse(insert_storage)
 
 
-def XidEvent():
+def XidEvent(binlog):
     logger.debug("XidEvent")
-    global insert_storage
-    _push_to_clickhouse(insert_storage)
+    global insert_storage, binlog_position_save_function_ptr
+    if insert_storage.push_xid_binlog(binlog):
+        _push_to_clickhouse(insert_storage)
+    else:
+        binlog_position_save_function_ptr(binlog)

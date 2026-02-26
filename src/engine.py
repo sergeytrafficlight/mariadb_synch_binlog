@@ -18,7 +18,7 @@ from src.tools import binlog_file, plugin_wrapper, regeneration_threads_controll
 logging.getLogger("pymysqlreplication").setLevel(logging.ERROR)
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+#logger.setLevel(logging.INFO)
 
 if not logger.handlers:
     console_handler = logging.StreamHandler()
@@ -90,7 +90,6 @@ FORBIDDEN = {
 def save_binlog_position(binlog):
     logger.debug(f"save binlog {binlog}")
     if binlog:
-        print(f"save binlog {binlog}")
         assert binlog.save()
 
 
@@ -254,38 +253,31 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
     try:
         while not STOP:
             for event in binlog_stream:
-
-                binlog.pos = binlog_stream.log_pos
-                binlog.file = binlog_stream.log_file
-
-                PARSED_BINLOG_TOTAL = binlog.copy()
-
                 if isinstance(event, XidEvent):
-
                     logger.debug(f'got xidevent')
-                    USER_FUNC.XidEvent()
-                    continue
+                    binlog.pos = event.packet.log_pos
+                    binlog.file = binlog_stream.log_file
+                    PARSED_BINLOG_TOTAL = binlog.copy()
+                    PARSED_BINLOG_MY = binlog.copy()
+                    USER_FUNC.XidEvent(binlog.copy())
 
-                if event.schema != app_settings['db_name']:
-                    continue
-                if event.table not in app_settings['scan_tables']:
-                    continue
-
+                elif event.schema != app_settings['db_name']:
+                    pass
+                elif event.table not in app_settings['scan_tables']:
+                    pass
                 elif isinstance(event, (WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent)):
                     PARSED_BINLOG_MY = binlog.copy()
                     schema = event.schema
                     table = event.table
-
                     for row in event.rows:
                         if STOP:
                             break
-                        print(f"event binlog {binlog}")
                         if isinstance(event, WriteRowsEvent):
-                            USER_FUNC.process_event('insert', schema, table, row['values'], binlog.copy())
+                            USER_FUNC.process_event('insert', event.schema, event.table, row['values'], binlog.copy())
                         elif isinstance(event, UpdateRowsEvent):
-                            USER_FUNC.process_event('update', schema, table, row, binlog.copy())
+                            USER_FUNC.process_event('update', event.schema, event.table, row, binlog.copy())
                         elif isinstance(event, DeleteRowsEvent):
-                            USER_FUNC.process_event('delete', schema, table, row, binlog.copy())
+                            USER_FUNC.process_event('delete', event.schema, event.table, row, binlog.copy())
 
             time.sleep(0.2)
 
@@ -333,7 +325,7 @@ def health_server(socket_path, mysql_settings, app_settings):
                         "binlog_server_app": str(PARSED_BINLOG_MY),
                         "consumer_binlog": str(binlog_saved),
                         "binlog_parsed_diff": get_binlog_diff(PARSED_BINLOG_TOTAL, binlog_db),
-                        "binlog_diff": get_binlog_diff(binlog_saved, PARSED_BINLOG_MY),
+                        "binlog_diff": get_binlog_diff(binlog_saved, binlog_db),
                         "error": '',
                     }
                     try:

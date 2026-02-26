@@ -159,7 +159,7 @@ def _stop(consumer):
 
 
 
-def _test_start_stop():
+def test_start_stop():
 
     db_name = create_mariadb_db()
     db_clickhouse = create_clickhouse_db()
@@ -181,11 +181,11 @@ def test_init_load_insert():
 
     compare_db()
 
-    generate_init_load(1)
+    generate_init_load(100)
     consumer = _start()
 
     assert statistic.initiate_full_regeneration == 1
-    assert statistic.process_event_insert == 1
+    assert statistic.process_event_insert == 100
     time.sleep(5)
     _stop(consumer)
 
@@ -200,6 +200,7 @@ def test_init_load_insert():
     generate_load(1, True)
 
     time.sleep(1)
+
     assert statistic.process_event_insert == 1
 
     _stop(consumer)
@@ -229,7 +230,7 @@ def test_init_load_insert():
 
 
 
-def _test_engine_stresstest():
+def test_engine_stresstest():
 
     global statistic
     statistic.clear()
