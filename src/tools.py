@@ -25,6 +25,9 @@ class binlog_file:
     def __ne__(self, other):
         return not self == other
 
+    def copy(self):
+        return binlog_file(file_path=self.file_path, file=self.file, pos=self.pos)
+
     def load(self):
         if not os.path.exists(self.file_path):
             return False

@@ -18,7 +18,7 @@ from src.tools import binlog_file, plugin_wrapper, regeneration_threads_controll
 logging.getLogger("pymysqlreplication").setLevel(logging.ERROR)
 
 logger = logging.getLogger(__name__)
-#logger.setLevel(logging.INFO)
+logger.setLevel(logging.INFO)
 
 if not logger.handlers:
     console_handler = logging.StreamHandler()
@@ -90,7 +90,7 @@ FORBIDDEN = {
 def save_binlog_position(binlog):
     logger.debug(f"save binlog {binlog}")
     if binlog:
-        #print(f"save binlog {binlog}")
+        print(f"save binlog {binlog}")
         assert binlog.save()
 
 
@@ -258,7 +258,7 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
                 binlog.pos = binlog_stream.log_pos
                 binlog.file = binlog_stream.log_file
 
-                PARSED_BINLOG_TOTAL = binlog
+                PARSED_BINLOG_TOTAL = binlog.copy()
 
                 if isinstance(event, XidEvent):
 
@@ -272,18 +272,20 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
                     continue
 
                 elif isinstance(event, (WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent)):
-                    PARSED_BINLOG_MY = binlog
+                    PARSED_BINLOG_MY = binlog.copy()
                     schema = event.schema
                     table = event.table
+
                     for row in event.rows:
                         if STOP:
                             break
+                        print(f"event binlog {binlog}")
                         if isinstance(event, WriteRowsEvent):
-                            USER_FUNC.process_event('insert', schema, table, row['values'], binlog)
+                            USER_FUNC.process_event('insert', schema, table, row['values'], binlog.copy())
                         elif isinstance(event, UpdateRowsEvent):
-                            USER_FUNC.process_event('update', schema, table, row, binlog)
+                            USER_FUNC.process_event('update', schema, table, row, binlog.copy())
                         elif isinstance(event, DeleteRowsEvent):
-                            USER_FUNC.process_event('delete', schema, table, row, binlog)
+                            USER_FUNC.process_event('delete', schema, table, row, binlog.copy())
 
             time.sleep(0.2)
 
@@ -434,8 +436,8 @@ def full_regeneration(cursor, mysql_settings, app_settings, binlog):
 
     USER_FUNC.finished_full_regeneration()
     
-    PARSED_BINLOG_TOTAL = binlog
-    PARSED_BINLOG_MY = binlog
+    PARSED_BINLOG_TOTAL = binlog.copy()
+    PARSED_BINLOG_MY = binlog.copy()
     assert binlog.save()
 
 def run(MYSQL_SETTINGS, APP_SETTINGS):
