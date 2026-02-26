@@ -18,7 +18,7 @@ from src.tools import binlog_file, plugin_wrapper, regeneration_threads_controll
 logging.getLogger("pymysqlreplication").setLevel(logging.ERROR)
 
 logger = logging.getLogger(__name__)
-#logger.setLevel(logging.INFO)
+logger.setLevel(logging.CRITICAL)
 
 if not logger.handlers:
     console_handler = logging.StreamHandler()
@@ -229,7 +229,7 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
 
     binlog_stream = BinLogStreamReader(
         connection_settings=mysql_settings,
-        server_id=100001,          # уникальный server_id для consumer
+        server_id=app_settings['unique_consumer_server_id'],          # уникальный server_id для consumer
         blocking=False,             # ждём новые события
         resume_stream=True,        # продолжим с последней позиции, если указана
         only_events=[
@@ -258,7 +258,6 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
                     binlog.pos = event.packet.log_pos
                     binlog.file = binlog_stream.log_file
                     PARSED_BINLOG_TOTAL = binlog.copy()
-                    PARSED_BINLOG_MY = binlog.copy()
                     USER_FUNC.XidEvent(binlog.copy())
 
                 elif event.schema != app_settings['db_name']:
@@ -280,7 +279,8 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
                             USER_FUNC.process_event('delete', event.schema, event.table, row, binlog.copy())
 
             time.sleep(0.2)
-
+    except Exception as e:
+        logger.critical(f"Consumer exception: {e}")
     finally:
         binlog_stream.close()
         return
@@ -334,7 +334,8 @@ def health_server(socket_path, mysql_settings, app_settings):
                         logger.warning("Send timeout")
                     except (BrokenPipeError, ConnectionError) as e:
                         logger.warning(f"Client disconnected: {e}")
-
+    except Exception as e:
+        logger.critical(f"Health server exception: {e}")
     finally:
         server.close()
         if os.path.exists(socket_path):
