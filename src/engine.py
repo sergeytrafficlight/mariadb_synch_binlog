@@ -18,7 +18,7 @@ from src.tools import binlog_file, plugin_wrapper, regeneration_threads_controll
 logging.getLogger("pymysqlreplication").setLevel(logging.ERROR)
 
 logger = logging.getLogger(__name__)
-#logger.setLevel(logging.DEBUG)
+#logger.setLevel(logging.INFO)
 
 if not logger.handlers:
     console_handler = logging.StreamHandler()
@@ -53,20 +53,24 @@ USER_FUNC = None
 STOP = None
 LAST_SIGINT = None
 FORCE_EXIT_WINDOW = None
-GTID = None
 STAGE = None
 REGENERATION_CONTROLLER = None
+#binlog for all trx
+PARSED_BINLOG_TOTAL = None
+#binlog only for my tables
+PARSED_BINLOG_MY = None
 GLOBAL_LOCK = threading.Lock()
 
 def init(MYSQL_SETTINGS, APP_SETTINGS):
-    global USER_FUNC, STOP, LAST_SIGINT, FORCE_EXIT_WINDOW, GTID, STAGE, REGENERATION_CONTROLLER
+    global USER_FUNC, STOP, LAST_SIGINT, FORCE_EXIT_WINDOW, STAGE, REGENERATION_CONTROLLER, PARSED_BINLOG, PARSED_BINLOG_MY
     USER_FUNC = plugin_wrapper(APP_SETTINGS['handle_events_plugin'])
     STOP = False
     LAST_SIGINT = 0
     FORCE_EXIT_WINDOW = 1.5
-    GTID = None
     STAGE = Stage.INIT
     REGENERATION_CONTROLLER = regeneration_threads_controller(APP_SETTINGS['full_regeneration_threads_count'])
+    PARSED_BINLOG = None
+    PARSED_BINLOG_MY = None
 
 REQUIRED = {
     "REPLICATION SLAVE",
@@ -218,7 +222,7 @@ def preflight_check(cursor, mysql_settings, app_settings):
 
 
 def start_binlog_consumer(mysql_settings, app_settings, binlog):
-    global USER_FUNC, GTID, GLOBAL_LOCK, STAGE
+    global USER_FUNC, GLOBAL_LOCK, STAGE, PARSED_BINLOG_TOTAL, PARSED_BINLOG_MY
 
 
     USER_FUNC.initiate_synch_mode()
@@ -233,12 +237,13 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
             WriteRowsEvent,
             UpdateRowsEvent,
             DeleteRowsEvent,
-            MariadbGtidEvent,
             XidEvent,
             QueryEvent,
         ],
-        only_schemas=[app_settings['db_name']],
-        only_tables=app_settings['scan_tables'],
+#        only_schemas=[app_settings['db_name']],
+#        only_tables=app_settings['scan_tables'],
+        only_schemas=None,
+        only_tables=None,
         freeze_schema=True,        # не модифицируем schema
         log_file=binlog.file,
         log_pos=binlog.pos,
@@ -248,27 +253,26 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
 
     try:
         while not STOP:
-
             for event in binlog_stream:
 
+                binlog.pos = binlog_stream.log_pos
+                binlog.file = binlog_stream.log_file
 
-                if isinstance(event, MariadbGtidEvent):
-                    with GLOBAL_LOCK:
-                        GTID = event.gtid
-                    continue
+                PARSED_BINLOG_TOTAL = binlog
 
-                elif isinstance(event, QueryEvent):
-                    pass
-
-                elif isinstance(event, XidEvent):
+                if isinstance(event, XidEvent):
 
                     logger.debug(f'got xidevent')
-                    binlog.file = binlog_stream.log_file
-                    binlog.pos = event.packet.log_pos
                     USER_FUNC.XidEvent()
+                    continue
 
+                if event.schema != app_settings['db_name']:
+                    continue
+                if event.table not in app_settings['scan_tables']:
+                    continue
 
                 elif isinstance(event, (WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent)):
+                    PARSED_BINLOG_MY = binlog
                     schema = event.schema
                     table = event.table
                     for row in event.rows:
@@ -290,7 +294,7 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
 
 def health_server(socket_path, mysql_settings, app_settings):
 
-    global STOP, GLOBAL_LOCK, REGENERATION_CONTROLLER, STAGE
+    global STOP, GLOBAL_LOCK, REGENERATION_CONTROLLER, STAGE, PARSED_BINLOG_TOTAL, PARSED_BINLOG_MY
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         server.bind(socket_path)
@@ -322,9 +326,12 @@ def health_server(socket_path, mysql_settings, app_settings):
                         "stage": str(STAGE),
                         "init_rows_total": init_rows_total,
                         "init_rows_parsed": init_rows_parsed,
-                        "server_binlog": str(binlog_db),
+                        "binlog_server_current": str(binlog_db),
+                        "binlog_server_parsed": str(PARSED_BINLOG_TOTAL),
+                        "binlog_server_app": str(PARSED_BINLOG_MY),
                         "consumer_binlog": str(binlog_saved),
-                        "binlog_diff": get_binlog_diff(binlog_saved, binlog_db),
+                        "binlog_parsed_diff": get_binlog_diff(PARSED_BINLOG_TOTAL, binlog_db),
+                        "binlog_diff": get_binlog_diff(binlog_saved, PARSED_BINLOG_MY),
                         "error": '',
                     }
 
