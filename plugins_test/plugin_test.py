@@ -73,24 +73,28 @@ def _push_to_clickhouse(storage):
 
     while True:
         logger.debug("get pack")
-        pack = storage.get_similar_pack_clear()
-        logger.debug(f"Drop to CH {len(pack)}")
-        if not len(pack):
+        data = storage.get_similar_pack_clear()
+        rows = data['rows']
+        xid_binlog = data['xid_binlog']
+
+        logger.debug(f"Drop to CH {len(rows)}")
+
+        if len(rows):
+            if not emulate_error:
+                client.insert(
+                    table=rows[0].table_name,
+                    column_names=rows[0].keys,
+                    data=[p.values for p in rows]
+                )
+            else:
+                logger.debug("Emulate error")
+                raise Exception(f"Emulate error")
+
+        if xid_binlog is not None:
+            binlog_position_save_function_ptr(xid_binlog)
+
+        if not len(rows):
             break
-
-        if not emulate_error:
-            client.insert(
-                table=pack[0].table_name,
-                column_names=pack[0].keys,
-                data=[p.values for p in pack]
-            )
-
-            binlog_position_save_function_ptr(pack[-1].binlog)
-        else:
-            logger.debug("Emulate error")
-            raise Exception(f"Emulate error")
-
-
 
     client.close()
 
@@ -155,7 +159,7 @@ def tear_down():
     logger.debug("DEINIT")
 
 
-def process_event(event_type, schema, table, event, binlog):
+def process_event(event_type, schema, table, event):
     # In full regeneration mode, this code may be executed in multiple threads.
     # In sync mode, it is executed in a single-threaded context.
     # print(f"Event type: {event_type}, schema: {schema}, table: {table}, event: {event}")
@@ -179,7 +183,7 @@ def process_event(event_type, schema, table, event, binlog):
         columns = list(event.keys())
         values = [event[col] for col in columns]
 
-        insert_storage.push(table, columns, values, binlog)
+        insert_storage.push(table, columns, values)
 
         # I intentionally ignore multithreading here.
         # During the full regeneration phase, multithreading does not make much sense for this logic.
@@ -198,7 +202,7 @@ def process_event(event_type, schema, table, event, binlog):
         columns = list(after.keys())
         values = [ after[col] for col in columns ]
 
-        insert_storage.push(table, columns, values, binlog)
+        insert_storage.push(table, columns, values)
 
     elif event_type == 'delete':
         statistic.process_event_delete += 1
@@ -211,7 +215,7 @@ def process_event(event_type, schema, table, event, binlog):
         columns = list(deleted_record.keys())
         values = [deleted_record[col] for col in columns]
 
-        insert_storage.push(table, columns, values, binlog)
+        insert_storage.push(table, columns, values)
 
 
     else:
@@ -224,8 +228,6 @@ def process_event(event_type, schema, table, event, binlog):
 
 def XidEvent(binlog):
     logger.debug("XidEvent")
-    global insert_storage, binlog_position_save_function_ptr
-    if insert_storage.push_xid_binlog(binlog):
-        _push_to_clickhouse(insert_storage)
-    else:
-        binlog_position_save_function_ptr(binlog)
+    global insert_storage
+    insert_storage.push_xid_binlog(binlog)
+    _push_to_clickhouse(insert_storage)

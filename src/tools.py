@@ -17,7 +17,7 @@ class binlog_file:
         self.file_path = file_path
 
     def __str__(self):
-        return f"file: {self.file} pos: {self.pos}"
+        return f"file: {self.file} pos: {self.pos} [{self.file_path}]"
 
     def __eq__(self, other):
         return self.file == other.file and self.pos == other.pos
@@ -140,13 +140,32 @@ class regeneration_threads_controller:
 
 
 
-class insert_item:
 
-    def __init__(self, table_name: str, keys: [], values: [], binlog):
+
+class insert_item_row:
+
+    def __init__(self, table_name: str, keys: [], values: []):
         self.table_name = table_name
         self.keys = keys
         self.values = values
+
+    def is_row(self):
+        return True
+
+    def is_xid(self):
+        return False
+
+
+class insert_item_xid:
+
+    def __init__(self, binlog):
         self.binlog = binlog
+
+    def is_row(self):
+        return False
+
+    def is_xid(self):
+        return True
 
 
 class insert_buffer:
@@ -159,17 +178,13 @@ class insert_buffer:
 
     def push_xid_binlog(self, binlog):
         with self.lock:
-            if len(self.items):
-                self.items[-1].binlog = binlog
-                return True
-            else:
-                return False
+            self.items.append(insert_item_xid(binlog))
 
-    def push(self, table, columns, data, binlog) -> bool:
+    def push(self, table, columns, data) -> bool:
         #return triggered
 
         with self.lock:
-            self.items.append(insert_item(table, columns, data, binlog))
+            self.items.append(insert_item_row(table, columns, data))
             return len(self.items) > self.triggering_rows_count
 
     def overload(self):
@@ -184,19 +199,35 @@ class insert_buffer:
 
         with self.lock:
             if not len(self.items):
-                return []
+                return {
+                    'rows': [],
+                    'xid_binlog': None,
+                }
 
             pack = []
+            xid_binlog = None
+            xid_parsed_count = 0
 
             for i, item in enumerate(self.items):
+                if item.is_xid():
+                    xid_binlog = item.binlog
+                    xid_parsed_count += 1
+                    continue
+
+
                 if len(pack):
                     if pack[0].table_name != item.table_name or pack[0].keys != item.keys:
                         break
                 pack.append(item)
 
 
-            del self.items[:len(pack)]
-            return pack
+            del self.items[:len(pack) + xid_parsed_count]
+
+            return {
+                'rows': pack,
+                'xid_binlog': xid_binlog,
+            }
+
 
 def get_health_answer(socket_path):
 

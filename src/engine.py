@@ -18,7 +18,7 @@ from src.tools import binlog_file, plugin_wrapper, regeneration_threads_controll
 logging.getLogger("pymysqlreplication").setLevel(logging.ERROR)
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.CRITICAL)
+#logger.setLevel(logging.INFO)
 
 if not logger.handlers:
     console_handler = logging.StreamHandler()
@@ -175,7 +175,7 @@ def preflight_check(cursor, mysql_settings, app_settings):
         """
         stream = BinLogStreamReader(
             connection_settings=mysql_settings,
-            server_id=999999,  # временный fake-slave id
+            server_id=999999,
             blocking=False,  # не ждём события
             resume_stream=False,  # не сохраняем позицию
             freeze_schema=True,
@@ -239,10 +239,10 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
             XidEvent,
             QueryEvent,
         ],
-#        only_schemas=[app_settings['db_name']],
-#        only_tables=app_settings['scan_tables'],
-        only_schemas=None,
-        only_tables=None,
+        only_schemas=[app_settings['db_name']],
+        only_tables=app_settings['scan_tables'],
+#        only_schemas=None,
+#        only_tables=None,
         freeze_schema=True,        # не модифицируем schema
         log_file=binlog.file,
         log_pos=binlog.pos,
@@ -254,10 +254,11 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
         while not STOP:
             for event in binlog_stream:
                 if isinstance(event, XidEvent):
-                    logger.debug(f'got xidevent')
+
                     binlog.pos = event.packet.log_pos
                     binlog.file = binlog_stream.log_file
                     PARSED_BINLOG_TOTAL = binlog.copy()
+                    logger.debug(f'got xidevent {binlog}')
                     USER_FUNC.XidEvent(binlog.copy())
 
                 elif event.schema != app_settings['db_name']:
@@ -266,17 +267,15 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
                     pass
                 elif isinstance(event, (WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent)):
                     PARSED_BINLOG_MY = binlog.copy()
-                    schema = event.schema
-                    table = event.table
                     for row in event.rows:
                         if STOP:
                             break
                         if isinstance(event, WriteRowsEvent):
-                            USER_FUNC.process_event('insert', event.schema, event.table, row['values'], binlog.copy())
+                            USER_FUNC.process_event('insert', event.schema, event.table, row['values'])
                         elif isinstance(event, UpdateRowsEvent):
-                            USER_FUNC.process_event('update', event.schema, event.table, row, binlog.copy())
+                            USER_FUNC.process_event('update', event.schema, event.table, row)
                         elif isinstance(event, DeleteRowsEvent):
-                            USER_FUNC.process_event('delete', event.schema, event.table, row, binlog.copy())
+                            USER_FUNC.process_event('delete', event.schema, event.table, row)
 
             time.sleep(0.2)
     except Exception as e:
@@ -393,7 +392,7 @@ def full_regeneration_thread(mysql_settings, app_settings):
                 else:
                     continue
             for r in result:
-                USER_FUNC.process_event('insert', db_name, table, r, None)
+                USER_FUNC.process_event('insert', db_name, table, r)
 
             REGENERATION_CONTROLLER.add_parsed_count(table, count)
 
@@ -401,7 +400,7 @@ def full_regeneration_thread(mysql_settings, app_settings):
 
 
 
-def full_regeneration(cursor, mysql_settings, app_settings, binlog):
+def full_regeneration(mysql_settings, app_settings):
     global USER_FUNC, STAGE, PARSED_BINLOG_TOTAL, PARSED_BINLOG_MY
     USER_FUNC.initiate_full_regeneration()
     STAGE = Stage.REGENERATION
@@ -428,10 +427,12 @@ def full_regeneration(cursor, mysql_settings, app_settings, binlog):
         t.join()
 
     USER_FUNC.finished_full_regeneration()
-    
+
     PARSED_BINLOG_TOTAL = binlog.copy()
     PARSED_BINLOG_MY = binlog.copy()
-    assert binlog.save()
+    save_binlog_position(binlog)
+    return binlog
+
 
 def run(MYSQL_SETTINGS, APP_SETTINGS):
 
@@ -455,7 +456,7 @@ def run(MYSQL_SETTINGS, APP_SETTINGS):
 
         if not binlog.load():
             logger.debug(f"need full regeneration")
-            full_regeneration(cursor, MYSQL_SETTINGS, APP_SETTINGS, binlog)
+            binlog = full_regeneration(MYSQL_SETTINGS, APP_SETTINGS)
             logger.debug(f"regeneration - done")
         else:
             logger.debug(f"regenereation is not need, start from {str(binlog)}")

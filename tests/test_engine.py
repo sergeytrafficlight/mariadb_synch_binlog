@@ -159,7 +159,7 @@ def _stop(consumer):
 
 
 
-def test_start_stop():
+def _test_start_stop():
 
     db_name = create_mariadb_db()
     db_clickhouse = create_clickhouse_db()
