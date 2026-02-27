@@ -179,6 +179,7 @@ class insert_buffer:
     def push_xid_binlog(self, binlog):
         with self.lock:
             self.items.append(insert_item_xid(binlog))
+            return len(self.items) > self.triggering_rows_count
 
     def push(self, table, columns, data) -> bool:
         #return triggered

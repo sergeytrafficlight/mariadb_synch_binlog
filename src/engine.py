@@ -89,6 +89,7 @@ FORBIDDEN = {
 
 def save_binlog_position(binlog):
     logger.debug(f"save binlog {binlog}")
+    #print(f"save binlog {binlog}")
     if binlog:
         assert binlog.save()
 
@@ -239,10 +240,10 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
             XidEvent,
             QueryEvent,
         ],
-        only_schemas=[app_settings['db_name']],
-        only_tables=app_settings['scan_tables'],
-#        only_schemas=None,
-#        only_tables=None,
+#        only_schemas=[app_settings['db_name']],
+#        only_tables=app_settings['scan_tables'],
+        only_schemas=None,
+        only_tables=None,
         freeze_schema=True,        # не модифицируем schema
         log_file=binlog.file,
         log_pos=binlog.pos,
@@ -259,6 +260,7 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
                     binlog.file = binlog_stream.log_file
                     PARSED_BINLOG_TOTAL = binlog.copy()
                     logger.debug(f'got xidevent {binlog}')
+                    #print(f"got xid: {binlog}")
                     USER_FUNC.XidEvent(binlog.copy())
 
                 elif event.schema != app_settings['db_name']:

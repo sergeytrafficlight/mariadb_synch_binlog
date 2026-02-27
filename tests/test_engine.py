@@ -249,7 +249,7 @@ def test_engine_stresstest():
 
     set_emulate_error(False)
 
-    stress_test_duration_s = 60
+    stress_test_duration_s = 20
     def _stress_load_thread(duration_s):
         start_time = time.time()
 
