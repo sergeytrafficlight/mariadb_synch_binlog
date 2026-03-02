@@ -217,8 +217,15 @@ class insert_buffer:
 
 
                 if len(pack):
-                    if pack[0].table_name != item.table_name or pack[0].keys != item.keys:
+                    if pack[0].table_name != item.table_name:
                         break
+                    if pack[0].keys != item.keys:
+                        raise Exception(
+                            f"All rows for table '{item.table_name}' must have identical keys "
+                            f"and the same key order.\n"
+                            f"Row[0] keys: {pack[0].keys}\n"
+                            f"Row[1] keys: {item.keys}"
+                        )
                 pack.append(item)
 
 

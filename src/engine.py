@@ -468,6 +468,10 @@ def run(MYSQL_SETTINGS, APP_SETTINGS):
 
         start_binlog_consumer(MYSQL_SETTINGS, APP_SETTINGS, binlog)
 
+    except Exception as e:
+        logger.critical(f"Exception: {e}")
+        exit(-1)
+
     finally:
         STOP = True
         if health_thread:
