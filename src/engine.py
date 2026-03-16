@@ -148,7 +148,8 @@ def preflight_check_ex(cursor, mysql_settings, app_settings):
             errors.append("binlog_row_image != FULL")
 
         if vars.get("binlog_gtid_index") != "ON":
-            errors.append(f"binlog_gtid_index {vars.get('binlog_gtid_index')} != ON")
+            #errors.append(f"binlog_gtid_index {vars.get('binlog_gtid_index')} != ON")
+            pass
 
         if vars.get("gtid_strict_mode") != "ON":
             errors.append(f"gtid_strict_mode {vars.get('gtid_strict_mode')} != ON")

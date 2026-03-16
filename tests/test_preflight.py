@@ -25,7 +25,7 @@ def test_preflight_ok(fake_cursor):
     ]
 
     # не должно падать
-    preflight_check(fake_cursor, mysql_settings={}, app_settings={})
+    preflight_check_ex(fake_cursor, mysql_settings={}, app_settings={})
 
 def test_missing_replication_slave(fake_cursor):
     fake_cursor.fetchall.side_effect = [
@@ -33,7 +33,7 @@ def test_missing_replication_slave(fake_cursor):
     ]
 
     with pytest.raises(RuntimeError, match="Missing required privileges"):
-        preflight_check(fake_cursor, mysql_settings={}, app_settings={})
+        preflight_check_ex(fake_cursor, mysql_settings={}, app_settings={})
 
 @patch("src.engine.BinLogStreamReader")
 def test_probe_binlog_ok(mock_stream, fake_cursor):
@@ -59,6 +59,6 @@ def test_probe_binlog_ok(mock_stream, fake_cursor):
         ],
     ]
 
-    preflight_check(fake_cursor, mysql_settings={}, app_settings={})
+    preflight_check_ex(fake_cursor, mysql_settings={}, app_settings={})
 
     instance.close.assert_called_once()
