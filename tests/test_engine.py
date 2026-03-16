@@ -83,6 +83,26 @@ def generate_load(count, only_insert=False):
     conn.commit()
     conn.close()
 
+def generate_fake_xid(count):
+    mysql_settings = MYSQL_SETTINGS_ACTOR
+    mysql_settings['database'] = APP_SETTINGS['db_name']
+    conn = pymysql.connect(
+        **mysql_settings
+    )
+    cursor = conn.cursor()
+
+    for i in range(count):
+        name=f"name_{i}-load"
+        #logger.debug(f"insert load {name}")
+        cursor.execute(
+            "INSERT INTO items_fake_xid (name, value) VALUES (%s, %s)",
+            (name, i+1),
+        )
+        conn.commit()
+
+    conn.close()
+
+
 def compare_db(equal = True):
 
     mysql_settings = MYSQL_SETTINGS_ACTOR
@@ -257,6 +277,7 @@ def test_engine_stresstest():
             #print(f"generate load")
             generate_load(100, True)
             time.sleep(0.13)
+            generate_fake_xid(20)
 
     t_list = []
 

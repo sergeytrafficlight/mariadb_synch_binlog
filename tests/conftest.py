@@ -49,6 +49,14 @@ def create_mariadb_db(mysql_settings=MYSQL_SETTINGS_ACTOR, app_settings=APP_SETT
             )
         """)
 
+    cursor.execute("""
+            CREATE TABLE items_fake_xid (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                name VARCHAR(64),
+                value INT
+            )
+        """)
+
     return db_name
 
 def create_clickhouse_db(clickhouse_settings=CLICKHOUSE_SETTINGS_ACTOR):
