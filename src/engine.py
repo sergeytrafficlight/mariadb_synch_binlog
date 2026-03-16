@@ -13,7 +13,7 @@ import traceback
 from pymysqlreplication import BinLogStreamReader
 from pymysqlreplication.row_event import WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent
 from pymysqlreplication.event import MariadbGtidEvent, XidEvent, QueryEvent
-from src.tools import binlog_file, plugin_wrapper, regeneration_threads_controller, get_binlog_diff, get_binlog_from_db
+from .tools import binlog_file, plugin_wrapper, regeneration_threads_controller, get_binlog_diff, get_binlog_from_db
 
 logging.getLogger("pymysqlreplication").setLevel(logging.ERROR)
 
