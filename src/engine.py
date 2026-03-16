@@ -110,7 +110,7 @@ def handle_stop(signum, frame):
 signal.signal(signal.SIGINT, handle_stop)   # Ctrl+C
 signal.signal(signal.SIGTERM, handle_stop)
 
-def preflight_check(cursor, mysql_settings, app_settings):
+def preflight_check_ex(cursor, mysql_settings, app_settings):
     def check_grants(cursor):
         cursor.execute("SHOW GRANTS FOR CURRENT_USER")
         grants = [row[0] for row in cursor.fetchall()]
@@ -447,7 +447,7 @@ def run(MYSQL_SETTINGS, APP_SETTINGS):
         conn = pymysql.connect(**MYSQL_SETTINGS)
         cursor = conn.cursor()
 
-        preflight_check(cursor, MYSQL_SETTINGS, APP_SETTINGS)
+        preflight_check_ex(cursor, MYSQL_SETTINGS, APP_SETTINGS)
 
         binlog = binlog_file(APP_SETTINGS['binlog_file'])
 

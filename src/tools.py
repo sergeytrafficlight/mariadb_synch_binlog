@@ -295,3 +295,10 @@ def get_binlog_from_db(MYSQL_SETTINGS, APP_SETTINGS):
 
     conn.close()
     return binlog
+
+def preflight_check(MYSQL_SETTINGS, APP_SETTINGS):
+    from .engine import preflight_check_ex
+    conn = pymysql.connect(**MYSQL_SETTINGS)
+    cursor = conn.cursor()
+    preflight_check_ex(cursor, MYSQL_SETTINGS, APP_SETTINGS)
+    conn.close()
