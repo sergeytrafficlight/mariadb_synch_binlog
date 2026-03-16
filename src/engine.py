@@ -212,7 +212,7 @@ def preflight_check_ex(cursor, mysql_settings, app_settings):
                 errors.append(t)
 
         if len(errors):
-            raise RuntimeError(f"Can't find tables: {errors} | db_name {db_name}")
+            raise RuntimeError(f"Can't find tables: {errors} | db_name {db_name}\nquery: {q}\nfetch result: {r}")
 
     check_grants(cursor)
     check_variables(cursor)

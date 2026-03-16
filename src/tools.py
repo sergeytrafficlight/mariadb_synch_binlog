@@ -66,7 +66,6 @@ class plugin_wrapper:
 
     def __init__(self, module_path):
 
-        print(f"module path: {module_path}")
         module = importlib.import_module(module_path)
 
         self.init = getattr(module, 'init')
