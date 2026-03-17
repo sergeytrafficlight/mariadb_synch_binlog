@@ -2,6 +2,7 @@ import signal
 import os
 import time
 import pymysql
+from datetime import timedelta
 import logging
 import socket
 import threading
@@ -319,12 +320,14 @@ def health_server(socket_path, mysql_settings, app_settings):
                     binlog_saved = None
 
                 with GLOBAL_LOCK:
-                    init_rows_total, init_rows_parsed = REGENERATION_CONTROLLER.statistic()
+                    init_rows_total, init_rows_parsed, estimate = REGENERATION_CONTROLLER.statistic()
                     response = {
                         "status": "ok",
                         "stage": str(STAGE),
                         "init_rows_total": init_rows_total,
                         "init_rows_parsed": init_rows_parsed,
+                        "regeneration_estimate_s": estimate,
+                        "regeneration_human_estimate_s": str(timedelta(seconds=int(estimate))),
                         "binlog_server_current": str(binlog_db),
                         "binlog_server_parsed": str(PARSED_BINLOG_TOTAL),
                         "binlog_server_app": str(PARSED_BINLOG_MY),

@@ -89,10 +89,13 @@ class regeneration_threads_controller:
 
             self.max_id = 0
 
+
+
     def __init__(self, threads_count):
         self.tables = {}
         self.lock = threading.Lock()
         self.barrier = threading.Barrier(threads_count)
+        self.start_at = None
 
     def get_and_update_id(self, table, count):
         result = None
@@ -114,6 +117,9 @@ class regeneration_threads_controller:
             return self.tables[table].current_id >= self.tables[table].max_id
 
     def put_rows_count(self, table, count, min_id, max_id):
+        if self.start_at is None:
+            self.start_at = time.time()
+
         if min_id is None:
             min_id = 0
         if max_id is None:
@@ -134,10 +140,19 @@ class regeneration_threads_controller:
         with self.lock:
             total = 0
             parsed = 0
+
             for k, v in self.tables.items():
                 total += v.rows_count
                 parsed += v.rows_parsed
-            return (total, parsed)
+
+            if self.start_at and parsed < total:
+                time_diff = time.time() - self.start_at
+                time_per_one = float(time_diff) / parsed
+                estimate = (total - parsed) * time_per_one
+            else:
+                estimate = None
+
+            return (total, parsed, estimate)
 
 
 
