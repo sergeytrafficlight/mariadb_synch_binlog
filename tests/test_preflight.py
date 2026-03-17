@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import patch, MagicMock
-from src.engine import preflight_check_ex
+from ..src.engine import preflight_check_ex
 
 def test_preflight_ok(fake_cursor):
     fake_cursor.fetchall.side_effect = [
