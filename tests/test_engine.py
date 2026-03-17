@@ -270,16 +270,34 @@ def test_engine_stresstest():
     set_emulate_error(False)
 
     stress_test_duration_s = 20
+
+    def _stress_load_thread_fake_xid(duration_s):
+        start_time = time.time()
+
+        while time.time() - start_time < duration_s:
+            # print(f"generate load")
+            generate_fake_xid(20)
+            generate_load(10, True)
+            time.sleep(0.13)
+
+
+
+
     def _stress_load_thread(duration_s):
         start_time = time.time()
 
         while time.time() - start_time < duration_s:
             #print(f"generate load")
-            generate_load(100, True)
+            generate_load(10, True)
             time.sleep(0.13)
-            generate_fake_xid(20)
 
     t_list = []
+
+    for i in range(5):
+        t = threading.Thread(target=_stress_load_thread_fake_xid, args=(stress_test_duration_s, ))
+        t.start()
+        t_list.append(t)
+
 
     for i in range(20):
         t = threading.Thread(target=_stress_load_thread, args=(stress_test_duration_s, ))

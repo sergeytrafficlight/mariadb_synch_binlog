@@ -255,6 +255,9 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
     try:
         while not STOP:
             for event in binlog_stream:
+                if STOP:
+                    break
+
                 if isinstance(event, XidEvent):
 
                     binlog.pos = event.packet.log_pos

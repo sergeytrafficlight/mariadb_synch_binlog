@@ -225,9 +225,12 @@ def process_event(event_type, schema, table, event):
     if insert_storage.overload():
         _push_to_clickhouse(insert_storage)
 
+    #print(f"got event: len storage: {insert_storage.len()}")
+
 
 def XidEvent(binlog):
     logger.debug("XidEvent")
     global insert_storage
     insert_storage.push_xid_binlog(binlog)
+    #print(f"xid: len storage: {insert_storage.len()}")
     _push_to_clickhouse(insert_storage)
