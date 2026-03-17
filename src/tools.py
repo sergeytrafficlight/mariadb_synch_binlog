@@ -145,7 +145,7 @@ class regeneration_threads_controller:
                 total += v.rows_count
                 parsed += v.rows_parsed
 
-            if self.start_at and parsed < total:
+            if self.start_at and parsed < total and parsed:
                 time_diff = time.time() - self.start_at
                 time_per_one = float(time_diff) / parsed
                 estimate = (total - parsed) * time_per_one
