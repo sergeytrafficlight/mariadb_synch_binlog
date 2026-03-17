@@ -7,7 +7,7 @@ import time
 import os
 import signal
 import clickhouse_connect
-from tests.conftest import start_engine, create_mariadb_db, create_clickhouse_db
+from .conftest import start_engine, create_mariadb_db, create_clickhouse_db
 from config.config_test import MYSQL_SETTINGS_ACTOR, APP_SETTINGS, MYSQL_SETTINGS
 from plugins_test.plugin_test import statistic, CLICKHOUSE_SETTINGS_ACTOR
 from src.tools import get_health_answer, get_binlog_diff, start, stop, binlog_file
@@ -277,7 +277,6 @@ def test_engine_stresstest():
         while time.time() - start_time < duration_s:
             # print(f"generate load")
             generate_fake_xid(20)
-            generate_load(10, True)
             time.sleep(0.13)
 
 
@@ -293,10 +292,12 @@ def test_engine_stresstest():
 
     t_list = []
 
+
     for i in range(5):
         t = threading.Thread(target=_stress_load_thread_fake_xid, args=(stress_test_duration_s, ))
         t.start()
         t_list.append(t)
+
 
 
     for i in range(20):
