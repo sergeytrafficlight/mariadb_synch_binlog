@@ -321,13 +321,18 @@ def health_server(socket_path, mysql_settings, app_settings):
 
                 with GLOBAL_LOCK:
                     init_rows_total, init_rows_parsed, estimate = REGENERATION_CONTROLLER.statistic()
+                    if estimate:
+                        human_estimate = str(timedelta(seconds=int(estimate)))
+                    else:
+                        human_estimate = ''
+
                     response = {
                         "status": "ok",
                         "stage": str(STAGE),
                         "init_rows_total": init_rows_total,
                         "init_rows_parsed": init_rows_parsed,
                         "regeneration_estimate_s": estimate,
-                        "regeneration_human_estimate_s": str(timedelta(seconds=int(estimate))),
+                        "regeneration_human_estimate_s": human_estimate,
                         "binlog_server_current": str(binlog_db),
                         "binlog_server_parsed": str(PARSED_BINLOG_TOTAL),
                         "binlog_server_app": str(PARSED_BINLOG_MY),
