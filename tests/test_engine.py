@@ -8,10 +8,7 @@ import os
 import signal
 import clickhouse_connect
 from .conftest import start_engine, create_mariadb_db, create_clickhouse_db
-from ..config.config_test import MYSQL_SETTINGS_ACTOR, APP_SETTINGS, MYSQL_SETTINGS
-from ..plugins_test.plugin_test import statistic, CLICKHOUSE_SETTINGS_ACTOR
-from ..src.tools import get_health_answer, get_binlog_diff, start, stop, binlog_file
-from ..plugins_test.plugin_test import set_emulate_error
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -27,6 +24,7 @@ if not logger.handlers:
 
 
 def generate_init_load(count):
+    from config.config_test import MYSQL_SETTINGS_ACTOR, APP_SETTINGS, MYSQL_SETTINGS
     mysql_settings = MYSQL_SETTINGS_ACTOR
     mysql_settings['database'] = APP_SETTINGS['db_name']
     conn = pymysql.connect(
@@ -58,6 +56,7 @@ def generate_init_load(count):
     conn.close()
 
 def generate_load(count, only_insert=False):
+    from config.config_test import MYSQL_SETTINGS_ACTOR, APP_SETTINGS, MYSQL_SETTINGS
     mysql_settings = MYSQL_SETTINGS_ACTOR
     mysql_settings['database'] = APP_SETTINGS['db_name']
     conn = pymysql.connect(
@@ -84,6 +83,7 @@ def generate_load(count, only_insert=False):
     conn.close()
 
 def generate_fake_xid(count):
+    from config.config_test import MYSQL_SETTINGS_ACTOR, APP_SETTINGS, MYSQL_SETTINGS
     mysql_settings = MYSQL_SETTINGS_ACTOR
     mysql_settings['database'] = APP_SETTINGS['db_name']
     conn = pymysql.connect(
@@ -104,7 +104,8 @@ def generate_fake_xid(count):
 
 
 def compare_db(equal = True):
-
+    from config.config_test import MYSQL_SETTINGS_ACTOR, APP_SETTINGS, MYSQL_SETTINGS
+    from plugins_test.plugin_test import statistic, CLICKHOUSE_SETTINGS_ACTOR
     mysql_settings = MYSQL_SETTINGS_ACTOR
     mysql_settings['database'] = APP_SETTINGS['db_name']
 
@@ -162,6 +163,7 @@ def compare_db(equal = True):
     client_ch.close()
 
 def clear_binlog_file():
+    from config.config_test import MYSQL_SETTINGS_ACTOR, APP_SETTINGS, MYSQL_SETTINGS
     binlog_file_path = APP_SETTINGS['binlog_file']
     try:
         os.remove(binlog_file_path)
@@ -169,11 +171,14 @@ def clear_binlog_file():
         pass
 
 def _start():
+    from config.config_test import MYSQL_SETTINGS_ACTOR, APP_SETTINGS, MYSQL_SETTINGS
+    from src.tools import get_health_answer, get_binlog_diff, start, stop, binlog_file
     r = start(MYSQL_SETTINGS, APP_SETTINGS, as_thread=True)
     time.sleep(1)
     return r
 
 def _stop(consumer):
+    from src.tools import get_health_answer, get_binlog_diff, start, stop, binlog_file
     stop(consumer)
     assert not consumer.is_alive()
 
@@ -192,6 +197,8 @@ def _test_start_stop():
 def test_init_load_insert():
 
     from plugins_test.plugin_test import statistic
+    from plugins_test.plugin_test import set_emulate_error
+
     statistic.clear()
 
     db_name = create_mariadb_db()
@@ -251,8 +258,12 @@ def test_init_load_insert():
 
 
 def test_engine_stresstest():
+    from config.config_test import MYSQL_SETTINGS_ACTOR, APP_SETTINGS, MYSQL_SETTINGS
+    from src.tools import get_health_answer, get_binlog_diff, start, stop, binlog_file
+    from plugins_test.plugin_test import statistic
+    from plugins_test.plugin_test import set_emulate_error
 
-    global statistic
+#    global statistic
     statistic.clear()
 
     clear_binlog_file()
@@ -349,7 +360,7 @@ def test_engine_stresstest():
 
 
 def test_gtid_diff():
-
+    from src.tools import get_health_answer, get_binlog_diff, start, stop, binlog_file
 
     r = get_binlog_diff(binlog_file(file_path='/var/tmp/1', file='a', pos=0), binlog_file(file_path='/var/tmp/1', file='a', pos=1))
     assert r == 1

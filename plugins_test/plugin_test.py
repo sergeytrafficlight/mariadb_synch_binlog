@@ -2,7 +2,6 @@ import clickhouse_connect
 import threading
 import time
 import logging
-from ..src.tools import insert_buffer
 logger = logging.getLogger(__name__)
 #logger.setLevel(logging.DEBUG)
 
@@ -100,6 +99,7 @@ def _push_to_clickhouse(storage):
 
 
 def init(binlog_position_save_function):
+    from src.tools import insert_buffer
     global statistic, clickhouse_connectors, insert_storage, binlog_position_save_function_ptr
     logger.debug("INIT")
     statistic.init += 1

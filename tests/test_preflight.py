@@ -1,8 +1,8 @@
 import pytest
 from unittest.mock import patch, MagicMock
-from ..src.engine import preflight_check_ex
 
 def test_preflight_ok(fake_cursor):
+    from src.engine import preflight_check_ex
     fake_cursor.fetchall.side_effect = [
         # SHOW GRANTS
         [("GRANT REPLICATION SLAVE, BINLOG MONITOR ON *.* TO user",)],
@@ -28,6 +28,7 @@ def test_preflight_ok(fake_cursor):
     preflight_check_ex(fake_cursor, mysql_settings={}, app_settings={})
 
 def test_missing_replication_slave(fake_cursor):
+    from src.engine import preflight_check_ex
     fake_cursor.fetchall.side_effect = [
         [("GRANT SELECT ON *.* TO user",)],
     ]
@@ -37,6 +38,7 @@ def test_missing_replication_slave(fake_cursor):
 
 @patch("src.engine.BinLogStreamReader")
 def test_probe_binlog_ok(mock_stream, fake_cursor):
+    from src.engine import preflight_check_ex
     instance = MagicMock()
     instance.__iter__.return_value = iter([])
     mock_stream.return_value = instance

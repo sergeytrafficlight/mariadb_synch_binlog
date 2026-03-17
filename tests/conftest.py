@@ -4,14 +4,16 @@ import threading
 import time
 import clickhouse_connect
 from unittest.mock import MagicMock
-from ..config.config_test import MYSQL_SETTINGS, APP_SETTINGS, MYSQL_SETTINGS_ACTOR
-from ..plugins_test.plugin_test import CLICKHOUSE_SETTINGS_ACTOR
-from ..src.engine import run
+from config.config_test import MYSQL_SETTINGS, APP_SETTINGS, MYSQL_SETTINGS_ACTOR
+from plugins_test.plugin_test import CLICKHOUSE_SETTINGS_ACTOR
+
 
 
 @pytest.fixture(autouse=True)
 def use_test_config(monkeypatch):
     import config.config as prod_cfg
+
+
     monkeypatch.setattr(prod_cfg, "MYSQL_SETTINGS", MYSQL_SETTINGS)
     monkeypatch.setattr(prod_cfg, "APP_SETTINGS", APP_SETTINGS)
 
@@ -107,6 +109,7 @@ def create_clickhouse_db(clickhouse_settings=CLICKHOUSE_SETTINGS_ACTOR):
 
 
 def start_engine(MYSQL_SETTINGS, APP_SETTINGS):
+    from src.engine import run
 
     thread = threading.Thread(
         target=run,
