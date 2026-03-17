@@ -2,7 +2,7 @@ import clickhouse_connect
 import threading
 import time
 import logging
-from src.tools import insert_buffer
+from ..src.tools import insert_buffer
 logger = logging.getLogger(__name__)
 #logger.setLevel(logging.DEBUG)
 
