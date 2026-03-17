@@ -4,8 +4,8 @@ import threading
 import time
 import clickhouse_connect
 from unittest.mock import MagicMock
-from config.config_test import MYSQL_SETTINGS, APP_SETTINGS, MYSQL_SETTINGS_ACTOR
-from plugins_test.plugin_test import CLICKHOUSE_SETTINGS_ACTOR
+from ..config.config_test import MYSQL_SETTINGS, APP_SETTINGS, MYSQL_SETTINGS_ACTOR
+from ..plugins_test.plugin_test import CLICKHOUSE_SETTINGS_ACTOR
 
 
 
