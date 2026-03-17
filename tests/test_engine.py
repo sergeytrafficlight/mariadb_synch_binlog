@@ -8,7 +8,7 @@ import os
 import signal
 import clickhouse_connect
 from .conftest import start_engine, create_mariadb_db, create_clickhouse_db
-from config.config_test import MYSQL_SETTINGS_ACTOR, APP_SETTINGS, MYSQL_SETTINGS
+from ..config.config_test import MYSQL_SETTINGS_ACTOR, APP_SETTINGS, MYSQL_SETTINGS
 from plugins_test.plugin_test import statistic, CLICKHOUSE_SETTINGS_ACTOR
 from src.tools import get_health_answer, get_binlog_diff, start, stop, binlog_file
 from plugins_test.plugin_test import set_emulate_error
