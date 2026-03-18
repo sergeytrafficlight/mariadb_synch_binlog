@@ -286,7 +286,7 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
 
             time.sleep(0.2)
     except Exception as e:
-        logger.critical(f"Consumer exception: {e}")
+        logger.traceback(f"Consumer exception: {e}")
     finally:
         binlog_stream.close()
         return
