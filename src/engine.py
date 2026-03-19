@@ -333,7 +333,7 @@ def health_server(socket_path, mysql_settings, app_settings):
                         "stage": str(STAGE),
                         "init_rows_total": init_rows_total,
                         "init_rows_parsed": init_rows_parsed,
-                        "regeneration_estimate_s": estimate,
+                        "regeneration_estimate_s": int(estimate) if estimate else '',
                         "regeneration_human_estimate_s": human_estimate,
                         "binlog_server_current": str(binlog_db),
                         "binlog_server_parsed": str(PARSED_BINLOG_TOTAL),
