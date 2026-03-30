@@ -1,3 +1,4 @@
+import sys
 import threading
 
 import pytest
@@ -7,6 +8,7 @@ import time
 import os
 import signal
 import clickhouse_connect
+
 from .conftest import start_engine, create_mariadb_db, create_clickhouse_db
 
 
@@ -101,6 +103,56 @@ def generate_fake_xid(count):
         conn.commit()
 
     conn.close()
+
+def change_binlog_file():
+    from config.config_test import MYSQL_SETTINGS_ACTOR, APP_SETTINGS, MYSQL_SETTINGS
+    mysql_settings = MYSQL_SETTINGS_ACTOR
+    mysql_settings['database'] = APP_SETTINGS['db_name']
+    conn = pymysql.connect(
+        **mysql_settings
+    )
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            "FLUSH BINARY LOGS;"
+        )
+    except Exception as e:
+        logger.critical(f"Flush binary logs error: {str(e)}")
+        sys.exit(-1)
+
+    conn.close()
+
+def get_binary_logs():
+
+    from config.config_test import MYSQL_SETTINGS_ACTOR, APP_SETTINGS, MYSQL_SETTINGS
+    from src.tools import binlog_file
+    mysql_settings = MYSQL_SETTINGS_ACTOR
+    mysql_settings['database'] = APP_SETTINGS['db_name']
+    conn = pymysql.connect(
+        **mysql_settings
+    )
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            "SHOW BINARY LOGS;"
+        )
+
+        result = cursor.fetchall()
+        binlogs = []
+        for r in result:
+            binlogs.append(binlog_file(file_path='/var/tmp/1', file=r[0], pos=r[1]))
+        conn.close()
+        return binlogs
+
+
+
+    except Exception as e:
+        logger.critical(str(e))
+        sys.exit(-1)
+
+
 
 
 def compare_db(equal = True):
@@ -301,7 +353,17 @@ def test_engine_stresstest():
             generate_load(10, True)
             time.sleep(0.13)
 
+
+    def _change_binlog_file(duration_s):
+
+        duration_s = duration_s / 4
+        for i in range(3):
+            time.sleep(duration_s)
+            change_binlog_file()
+
+
     t_list = []
+
 
 
     for i in range(5):
@@ -315,6 +377,11 @@ def test_engine_stresstest():
         t = threading.Thread(target=_stress_load_thread, args=(stress_test_duration_s, ))
         t.start()
         t_list.append(t)
+
+    t = threading.Thread(target=_change_binlog_file, args=(stress_test_duration_s, ))
+    t.start()
+    t_list.append(t)
+
 
     start_time = time.time()
 
@@ -350,6 +417,8 @@ def test_engine_stresstest():
         answer = get_health_answer(APP_SETTINGS['health_socket'])
         lag = answer['binlog_diff']
         print(f"binlog lag: {lag}")
+        if lag is None:
+            continue
         if not lag:
             break
 
@@ -362,13 +431,84 @@ def test_engine_stresstest():
 def test_gtid_diff():
     from src.tools import get_health_answer, get_binlog_diff, start, stop, binlog_file
 
-    r = get_binlog_diff(binlog_file(file_path='/var/tmp/1', file='a', pos=0), binlog_file(file_path='/var/tmp/1', file='a', pos=1))
-    assert r == 1
-    r = get_binlog_diff(binlog_file(file_path='/var/tmp/1', file='a', pos=1), binlog_file(file_path='/var/tmp/1', file='a', pos=0))
-    assert r == -1
-    r = get_binlog_diff(binlog_file(file_path='/var/tmp/1', file='a', pos=0), None)
-    assert r is None
-    r = get_binlog_diff(None, binlog_file(file_path='/var/tmp/1', file='a', pos=0))
-    assert r is None
-    r = get_binlog_diff(binlog_file(file_path='/var/tmp/1', file='a', pos=1), binlog_file(file_path='/var/tmp/1', file='b', pos=0))
-    assert r is None
+    def _check_binlog_in_range(a):
+        binary_logs = get_binary_logs()
+        for log in binary_logs:
+            if a.file != log.file:
+                continue
+            if a.pos <= log.pos and a.pos >= 0:
+                return True
+            return False
+        return False
+
+    def _calc_diff(binary_logs, a, b):
+        assert _check_binlog_in_range(a), f"Binlog A out of range: {a}"
+        assert _check_binlog_in_range(b), f"Binlog A out of range: {b}"
+        assert b >= a, f"B {b} is less than A {a}"
+
+        diff = 0
+        found_a = False
+        found_b = False
+        for log in binary_logs:
+            if log.file < a.file:
+                continue
+            if log.file == a.file:
+                found_a = True
+                if a.file == b.file:
+                    found_b = True
+                    diff += b.pos - a.pos
+                    break
+
+                diff += log.pos - a.pos
+                continue
+
+            if log.file < b.file:
+                diff += log.pos
+
+                continue
+            if log.file == b.file:
+                found_b = True
+                diff += b.pos
+
+                break
+            raise ValueError(f"Current log ({log}) > b ({b})")
+
+        assert found_a and found_b, f"Not all logs found A: {found_a} B: {found_b}"
+        return diff
+
+
+
+
+    binary_logs = get_binary_logs()
+
+    assert len(binary_logs) > 3, f"Binary logs len have to me greater then 3, for this test. Try to run 'FLUSH BINARY LOGS;' some times, to reach this ;)"
+
+    first_binary_log = binary_logs[0].copy()
+    last_binary_log = binary_logs[0].copy()
+    diff = _calc_diff(binary_logs, first_binary_log, last_binary_log)
+    assert diff == 0
+
+    last_binary_log.pos += 1
+
+    assert not _check_binlog_in_range(last_binary_log)
+    last_binary_log.pos -= 1
+    assert _check_binlog_in_range(last_binary_log)
+
+    first_binary_log.pos -= 1
+    assert _check_binlog_in_range(first_binary_log) #may be pos is < 0 ?
+
+    diff = _calc_diff(binary_logs, first_binary_log, last_binary_log)
+    assert diff == 1
+
+    diff = _calc_diff(binary_logs, first_binary_log, last_binary_log)
+    assert diff == 1
+
+    first_binary_log.pos = 0
+    last_binary_log = binary_logs[-1].copy()
+    diff = _calc_diff(binary_logs, first_binary_log, last_binary_log)
+    check_diff = 0
+    for log in binary_logs:
+        check_diff += log.pos
+
+    assert diff == check_diff
+
