@@ -225,6 +225,10 @@ def preflight_check_ex(cursor, mysql_settings, app_settings):
 
 def start_binlog_consumer(mysql_settings, app_settings, binlog):
     global USER_FUNC, GLOBAL_LOCK, STAGE, PARSED_BINLOG_TOTAL, PARSED_BINLOG_MY
+    from .tools import check_binlog_in_range
+
+    if not check_binlog_in_range(mysql_settings, binlog):
+        raise ValueError(f"Binlog {binlog} is out of range")
 
 
     USER_FUNC.initiate_synch_mode()
@@ -339,8 +343,8 @@ def health_server(socket_path, mysql_settings, app_settings):
                         "binlog_server_parsed": str(PARSED_BINLOG_TOTAL),
                         "binlog_server_app": str(PARSED_BINLOG_MY),
                         "consumer_binlog": str(binlog_saved),
-                        "binlog_parsed_diff": get_binlog_diff(PARSED_BINLOG_TOTAL, binlog_db),
-                        "binlog_diff": get_binlog_diff(binlog_saved, binlog_db),
+                        "binlog_parsed_diff": get_binlog_diff(mysql_settings, PARSED_BINLOG_TOTAL, binlog_db),
+                        "binlog_diff": get_binlog_diff(mysql_settings, binlog_saved, binlog_db),
                         "error": '',
                     }
                     try:

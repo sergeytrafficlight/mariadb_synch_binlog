@@ -7,23 +7,30 @@ import pymysql
 import importlib
 import threading
 import clickhouse_connect
+from functools import total_ordering
 
-
+@total_ordering
 class binlog_file:
 
-    def __init__(self, file_path, file=None, pos=None):
+    def __init__(self, file_path: str, file: str =None, pos: int =None):
         self.file = file
-        self.pos = pos
+        self.pos = int(pos) if pos else 0
         self.file_path = file_path
 
     def __str__(self):
         return f"file: {self.file} pos: {self.pos} [{self.file_path}]"
 
     def __eq__(self, other):
+        if not isinstance(other, binlog_file):
+            return NotImplemented
         return self.file == other.file and self.pos == other.pos
 
-    def __ne__(self, other):
-        return not self == other
+    def __lt__(self, other):
+        if not isinstance(other, binlog_file):
+            return NotImplemented
+        if self.file == other.file:
+            return self.pos < other.pos
+        return self.file < other.file
 
     def copy(self):
         return binlog_file(file_path=self.file_path, file=self.file, pos=self.pos)
@@ -262,16 +269,75 @@ def get_health_answer(socket_path):
     return json.loads(data.decode())
     #print(json.loads(data))
 
-def get_binlog_diff(binlog_a, binlog_b):
+def get_binlogs(mysql_settings):
+    conn = pymysql.connect(
+        **mysql_settings
+    )
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SHOW BINARY LOGS;"
+    )
+
+    result = cursor.fetchall()
+    binlogs = []
+
+    for r in result:
+        binlogs.append(binlog_file(file_path='/var/tmp/1', file=r[0], pos=r[1]))
+
+    conn.close()
+
+    return binlogs
+
+
+def check_binlog_in_range(mysql_settings, binlog, binlogs=None):
+    if binlogs is None:
+        binlogs = get_binlogs(mysql_settings)
+    for log in binlogs:
+        if binlog.file != log.file:
+            continue
+        if binlog.pos >= 0 and binlog.pos <= log.pos:
+            return True
+        return False
+    return False
+
+def get_binlog_diff(mysql_settings, binlog_a, binlog_b):
 
     if binlog_a is None or binlog_b is None:
         return None
 
-    if binlog_a.file != binlog_b.file:
-        return None
+    binlogs = get_binlogs(mysql_settings)
+    if not check_binlog_in_range(mysql_settings, binlog_a, binlogs=binlogs):
+        raise ValueError(f"Binlog {binlog_a} out of range")
+    if not check_binlog_in_range(mysql_settings, binlog_b, binlogs=binlogs):
+        raise ValueError(f"Binlog {binlog_b} out of range")
+
+    diff = 0
+    for log in binlogs:
+        if log.file < binlog_a.file:
+            continue
+
+        if log.file == binlog_a.file:
+            if binlog_a.file == binlog_b.file:
+                diff += binlog_b.pos - binlog_a.pos
+                break
+            else:
+                diff += log.pos - binlog_a.pos
+                continue
+
+        if log.file < binlog_b.file:
+            diff += log.pos
+            continue
+
+        if log.file == binlog_b.file:
+            diff += binlog_b.pos
+            break
+
+        raise ValueError(f"Current log ({log}) > b ({binlog_b})")
+
+    return diff
 
 
-    return binlog_b.pos - binlog_a.pos
 
 def start(MYSQL_SETTINGS, APP_SETTINGS, as_thread=True):
 
