@@ -487,7 +487,7 @@ def run(MYSQL_SETTINGS, APP_SETTINGS):
         start_binlog_consumer(MYSQL_SETTINGS, APP_SETTINGS, binlog)
 
     except Exception as e:
-        logger.critical(f"Exception: {e}")
+        logger.exception(f"Exception: {e}")
         logger.traceback(e)
         exit(-1)
 
