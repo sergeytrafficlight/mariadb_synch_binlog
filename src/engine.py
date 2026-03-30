@@ -488,6 +488,7 @@ def run(MYSQL_SETTINGS, APP_SETTINGS):
 
     except Exception as e:
         logger.critical(f"Exception: {e}")
+        logger.traceback(e)
         exit(-1)
 
     finally:
