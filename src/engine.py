@@ -15,7 +15,6 @@ from pymysqlreplication import BinLogStreamReader
 from pymysqlreplication.row_event import WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent
 from pymysqlreplication.event import MariadbGtidEvent, XidEvent, QueryEvent
 
-from plugins_test.plugin_test import insert_storage
 from .tools import binlog_file, plugin_wrapper, regeneration_threads_controller, get_binlog_diff, get_binlog_from_db, insert_buffer
 from .synch_storage import synch_storage
 

@@ -81,7 +81,6 @@ class plugin_wrapper:
         self.initiate_synch_mode = getattr(module, 'initiate_synch_mode')
         self.tear_down = getattr(module, 'tear_down')
         self.process_event = getattr(module, 'process_event')
-        self.XidEvent = getattr(module, 'XidEvent')
 
 
 class regeneration_threads_controller:

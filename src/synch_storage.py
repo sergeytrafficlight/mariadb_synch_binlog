@@ -135,17 +135,18 @@ class synch_storage:
 
     def __init__(self, max_len: int):
         self.lock = Lock()
-        self.swap_condition = Condition()
+        self.swap_condition = Condition(self.lock)
         self.buffer = synch_buffer()
         self.max_len = max_len
         self.size = 0
 
     def put_event(self, event_type, table, event):
 
-        if self.size >= self.max_len:
-            self.swap_condition.wait()
-
+        print(f"size: {self.size} max: {self.max_len}")
         with self.lock:
+            while self.size >= self.max_len:
+                self.swap_condition.wait()
+
             if event_type == 'insert':
                 self.buffer.put_insert(table, event)
             elif event_type == 'update':
@@ -158,12 +159,14 @@ class synch_storage:
 
     def get_buffer(self, expecting_binlog):
 
-        self.swap_condition.notify_all()
-
         with self.lock:
+
+            self.swap_condition.notify_all()
+
             if expecting_binlog:
                 if self.buffer.binlog is None:
                     return None
+
             result = self.buffer.copy()
             self.buffer = synch_buffer()
             self.size = 0
@@ -175,7 +178,8 @@ class synch_storage:
             self.buffer.put_binlog(binlog)
 
     def len(self):
-        return self.size
+        with self.lock:
+            return self.size
 
 
 
