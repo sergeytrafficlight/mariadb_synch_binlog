@@ -24,7 +24,7 @@ APP_SETTINGS = {
     'health_socket': './common/health.sock',
     'binlog_file': './common/binlog.pos',
     'handle_events_plugin': 'plugins_test.plugin_test',
-    'clickhouse_dropdown_sleep': 10,
-    'clickhouse_max_batch_len': 1000,
+    'clickhouse_dropdown_sleep': 2,
+    'clickhouse_max_batch_len': 10000,
 
 }

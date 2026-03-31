@@ -556,15 +556,11 @@ def run(MYSQL_SETTINGS, APP_SETTINGS):
 
     finally:
         STOP = True
-        print(f"stopping")
         if health_thread:
-            print(f"health")
             health_thread.join()
         if workers_thread:
-            print(f"workers")
             workers_thread.join()
 
-        print(f"teardown")
         USER_FUNC.tear_down()
         return 0
 
@@ -572,4 +568,3 @@ def run(MYSQL_SETTINGS, APP_SETTINGS):
 def stop():
     global STOP
     STOP = True
-    print(f"STOP CONSUMER")

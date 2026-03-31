@@ -273,7 +273,7 @@ def test_init_load_insert():
 
     compare_db()
 
-    init_load_count = 2
+    init_load_count = 100
     generate_init_load(init_load_count)
     consumer = _start()
     _wait_lag()
