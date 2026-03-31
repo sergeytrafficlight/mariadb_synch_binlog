@@ -2,6 +2,7 @@ import clickhouse_connect
 import threading
 import time
 import logging
+
 logger = logging.getLogger(__name__)
 #logger.setLevel(logging.DEBUG)
 
@@ -48,18 +49,14 @@ class statistic_class:
 
 
 statistic = statistic_class()
-version_id = 1
-insert_storage = None
-insert_storage_max_size = 1_000_000
-binlog_position_save_function_ptr = None
+version = None
 emulate_error = False
 
 def set_emulate_error(v):
     global emulate_error
     emulate_error = v
 
-
-def _push_to_clickhouse(storage):
+def dump_values(table_name, columns, values):
     global emulate_error
     logger.debug("push to clickhouse")
     client = clickhouse_connect.get_client(
@@ -70,41 +67,30 @@ def _push_to_clickhouse(storage):
         database=CLICKHOUSE_SETTINGS_ACTOR["database"],
     )
 
-    while True:
-        logger.debug("get pack")
-        data = storage.get_similar_pack_clear()
-        rows = data['rows']
-        xid_binlog = data['xid_binlog']
 
-        logger.debug(f"Drop to CH {len(rows)}")
-
-        if len(rows):
-            if not emulate_error:
-                client.insert(
-                    table=rows[0].table_name,
-                    column_names=rows[0].keys,
-                    data=[p.values for p in rows]
-                )
-            else:
-                logger.debug("Emulate error")
-                raise Exception(f"Emulate error")
-
-        if xid_binlog is not None:
-            binlog_position_save_function_ptr(xid_binlog)
-
-        if not len(rows):
-            break
-
+    if not emulate_error:
+        client.insert(
+            table=table_name,
+            column_names=columns,
+            data=values
+        )
+    else:
+        client.close()
+        logger.debug("Emulate error")
+        raise Exception(f"Emulate error")
     client.close()
 
 
-def init(binlog_position_save_function):
+
+def init():
     from src.tools import insert_buffer
-    global statistic, clickhouse_connectors, insert_storage, binlog_position_save_function_ptr
+    from src.synch_storage import version_lock
+    global statistic, version
+
     logger.debug("INIT")
     statistic.init += 1
-    insert_storage = insert_buffer(insert_storage_max_size)
-    binlog_position_save_function_ptr = binlog_position_save_function
+    version = version_lock()
+
 
 
 
@@ -114,22 +100,14 @@ def initiate_full_regeneration():
     statistic.initiate_full_regeneration +=1
 
 def finished_full_regeneration():
-    """Wait for all full regeneration operations to complete before returning.
-
-    Important: This function must block until all full regeneration operations
-    have finished. Only after that should it return.
-
-    Once this function returns, the engine will save the binlog position.
-    This allows skipping the full regeneration procedure in the future.
-    """
 
     global statistic, insert_storage
     statistic.finished_full_regeneration +=1
-    _push_to_clickhouse(insert_storage)
+
 
 def initiate_synch_mode():
     #print('initiate_synch_mode')
-    global statistic, version_id
+    global statistic, version
     statistic.initiate_synch_mode +=1
 
     client = clickhouse_connect.get_client(
@@ -147,7 +125,9 @@ def initiate_synch_mode():
     version_id = result.result_rows[0][0]
     if not version_id:
         #none
-        version_id = 1
+        version.set_version(1)
+    else:
+        version.set_version(version_id)
 
     client.close()
 
@@ -160,12 +140,8 @@ def tear_down():
 
 
 def process_event(event_type, schema, table, event):
-    # In full regeneration mode, this code may be executed in multiple threads.
-    # In sync mode, it is executed in a single-threaded context.
-    # print(f"Event type: {event_type}, schema: {schema}, table: {table}, event: {event}")
-
-    global statistic, version_id, clickhouse_connectors, insert_storage
-
+    from src.tools import process_event_result
+    global version
     if table != 'items':
         return
 
@@ -176,61 +152,38 @@ def process_event(event_type, schema, table, event):
         logger.debug(f"insert event {schema}.{table} event: {event}")
         statistic.process_event_insert +=1
 
-        version_id += 1
-
-        event['version'] = version_id
+        event['version'] = version.get_version()
 
         columns = list(event.keys())
         values = [event[col] for col in columns]
 
-        insert_storage.push(table, columns, values)
-
-        # I intentionally ignore multithreading here.
-        # During the full regeneration phase, multithreading does not make much sense for this logic.
-        # In sync mode, the code runs in a single thread, and it is important that version_id
-        # is incremented correctly and deterministically.
-        # This approach is not suitable for production use and should be treated as a temporary solution.
+        return process_event_result(table_name=table, columns=columns, values=values)
 
     elif event_type == 'update':
         statistic.process_event_update += 1
         logger.debug(f"update event {schema}.{table} event: {event}")
-        version_id += 1
 
         after = event['after_values']
-        after['version'] = version_id
+        after['version'] = version.get_version()
 
         columns = list(after.keys())
         values = [ after[col] for col in columns ]
 
-        insert_storage.push(table, columns, values)
+        return process_event_result(table_name=table, columns=columns, values=values)
 
     elif event_type == 'delete':
         statistic.process_event_delete += 1
         logger.debug(f"delete event {schema}.{table} event: {event}")
         deleted_record = event['values']
-        version_id += 1
         deleted_record['deleted'] = 1
-        deleted_record['version'] = version_id
+        deleted_record['version'] = version.get_version()
 
         columns = list(deleted_record.keys())
         values = [deleted_record[col] for col in columns]
 
-        insert_storage.push(table, columns, values)
-
+        return process_event_result(table_name=table, columns=columns, values=values)
 
     else:
         raise RuntimeError(f"Unknown event type '{event_type}'")
 
 
-    if insert_storage.overload():
-        _push_to_clickhouse(insert_storage)
-
-    #print(f"got event: len storage: {insert_storage.len()}")
-
-
-def XidEvent(binlog):
-    logger.debug("XidEvent")
-    global insert_storage
-    insert_storage.push_xid_binlog(binlog)
-    #print(f"xid: len storage: {insert_storage.len()}")
-    _push_to_clickhouse(insert_storage)

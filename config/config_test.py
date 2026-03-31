@@ -23,5 +23,8 @@ APP_SETTINGS = {
     'scan_tables': ['items','items2'],
     'health_socket': './common/health.sock',
     'binlog_file': './common/binlog.pos',
-    'handle_events_plugin': 'plugins_test.plugin_test'
+    'handle_events_plugin': 'plugins_test.plugin_test',
+    'clickhouse_dropdown_sleep': 2,
+    'clickhouse_max_batch_len': 100,
+
 }

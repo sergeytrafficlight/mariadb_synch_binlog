@@ -14,7 +14,10 @@ import traceback
 from pymysqlreplication import BinLogStreamReader
 from pymysqlreplication.row_event import WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent
 from pymysqlreplication.event import MariadbGtidEvent, XidEvent, QueryEvent
-from .tools import binlog_file, plugin_wrapper, regeneration_threads_controller, get_binlog_diff, get_binlog_from_db
+
+from plugins_test.plugin_test import insert_storage
+from .tools import binlog_file, plugin_wrapper, regeneration_threads_controller, get_binlog_diff, get_binlog_from_db, insert_buffer
+from .synch_storage import synch_storage
 
 logging.getLogger("pymysqlreplication").setLevel(logging.ERROR)
 
@@ -31,9 +34,7 @@ if not logger.handlers:
     logger.addHandler(console_handler)
 
 def thread_exception_handler(args):
-    # args.exc_type, args.exc_value, args.exc_traceback
     print(f"❌ Thread {args.thread.name} crashed:", args.exc_value)
-    # Завершаем весь процесс
 
     traceback.print_exception(
         args.exc_type,
@@ -61,6 +62,7 @@ PARSED_BINLOG_TOTAL = None
 #binlog only for my tables
 PARSED_BINLOG_MY = None
 GLOBAL_LOCK = threading.Lock()
+SYNCH_STORAGE = None
 
 def init(MYSQL_SETTINGS, APP_SETTINGS):
     global USER_FUNC, STOP, LAST_SIGINT, FORCE_EXIT_WINDOW, STAGE, REGENERATION_CONTROLLER, PARSED_BINLOG, PARSED_BINLOG_MY
@@ -224,7 +226,7 @@ def preflight_check_ex(cursor, mysql_settings, app_settings):
 
 
 def start_binlog_consumer(mysql_settings, app_settings, binlog):
-    global USER_FUNC, GLOBAL_LOCK, STAGE, PARSED_BINLOG_TOTAL, PARSED_BINLOG_MY
+    global USER_FUNC, GLOBAL_LOCK, STAGE, PARSED_BINLOG_TOTAL, PARSED_BINLOG_MY, SYNCH_STORAGE
     from .tools import check_binlog_in_range
 
     if not check_binlog_in_range(mysql_settings, binlog):
@@ -248,9 +250,7 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
         ],
         only_schemas=[app_settings['db_name']],
         only_tables=app_settings['scan_tables'],
-#        only_schemas=None,
-#        only_tables=None,
-        freeze_schema=True,        # не модифицируем schema
+        freeze_schema=True,
         log_file=binlog.file,
         log_pos=binlog.pos,
     )
@@ -270,7 +270,7 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
                     PARSED_BINLOG_TOTAL = binlog.copy()
                     logger.debug(f'got xidevent {binlog}')
                     #print(f"got xid: {binlog}")
-                    USER_FUNC.XidEvent(binlog.copy())
+                    SYNCH_STORAGE.put_binlog(binlog.copy())
 
                 elif event.schema != app_settings['db_name']:
                     pass
@@ -365,7 +365,7 @@ def health_server(socket_path, mysql_settings, app_settings):
 
 
 def full_regeneration_thread(mysql_settings, app_settings):
-    global USER_FUNC, REGENERATION_CONTROLLER
+    global USER_FUNC, REGENERATION_CONTROLLER, SYNCH_STORAGE
 
     db_name = app_settings['db_name']
     tables_name = app_settings['init_tables']
@@ -412,7 +412,8 @@ def full_regeneration_thread(mysql_settings, app_settings):
                 else:
                     continue
             for r in result:
-                USER_FUNC.process_event('insert', db_name, table, r)
+                #USER_FUNC.process_event('insert', db_name, table, r)
+                SYNCH_STORAGE.put_event(event_type='insert', table=table, event=r)
 
             REGENERATION_CONTROLLER.add_parsed_count(table, count)
 
@@ -426,13 +427,6 @@ def full_regeneration(mysql_settings, app_settings):
     STAGE = Stage.REGENERATION
 
     binlog = get_binlog_from_db(mysql_settings, app_settings)
-
-    '''
-    cursor.execute("SHOW MASTER STATUS;")
-    r = cursor.fetchall()
-    binlog.file = r[0][0]
-    binlog.pos = r[0][1]
-    '''
 
     #assert binlog.save()
 
@@ -453,11 +447,62 @@ def full_regeneration(mysql_settings, app_settings):
     save_binlog_position(binlog)
     return binlog
 
+def worker_thread(buffer_data, insert_storage):
+    global STOP
+    while not STOP:
+        event = buffer_data.get_event()
+        if event is None:
+            return
+        result = USER_FUNC.process_event(event.event_type, event.table, event.event)
+
+        insert_storage.push(result.table_name, result.columns, result.values)
+
+
+def run_workers_thread(app_settings):
+
+    global STOP, SYNCH_STORAGE, STAGE, USER_FUNC
+    timeout = app_settings['clickhouse_dropdown_sleep']
+
+    while not STOP:
+        time.sleep(timeout)
+        sync_mode = (STAGE == Stage.SYNCH)
+
+        buffer_data = SYNCH_STORAGE.get_buffer(expecting_binlog=sync_mode)
+        if buffer_data is None:
+            continue
+
+        insert_storage = insert_buffer()
+
+        threads = []
+        for i in range(app_settings['full_regeneration_threads_count']):
+            t = threading.Thread(target=worker_thread, args=(buffer_data, insert_storage))
+            t.start()
+            threads.append(t)
+
+        for t in threads:
+            t.join()
+
+        while True:
+            rows = insert_storage.get_similar_pack_clear()
+
+            if len(rows):
+                columns = ','.join(rows[0].keys)
+                values = [p.values for p in rows]
+                USER_FUNC.dump_values(rows[0].table_name, columns, values)
+            else:
+                break
+
+        if sync_mode:
+            assert buffer_data.binlog is not None, f"Binlog can't be None here"
+            save_binlog_position(buffer_data.binlog)
+
 
 def run(MYSQL_SETTINGS, APP_SETTINGS):
 
-    global USER_FUNC, STAGE, STOP
+    global USER_FUNC, STAGE, STOP, SYNCH_STORAGE
+
     init(MYSQL_SETTINGS, APP_SETTINGS)
+    SYNCH_STORAGE = synch_storage(max_len = APP_SETTINGS['clickhouse_max_batch_len'])
 
     health_thread = None
 
@@ -472,7 +517,7 @@ def run(MYSQL_SETTINGS, APP_SETTINGS):
         health_thread = threading.Thread(target=health_server, daemon=True, args=(APP_SETTINGS['health_socket'], MYSQL_SETTINGS, APP_SETTINGS,))
         health_thread.start()
 
-        USER_FUNC.init(save_binlog_position)
+        USER_FUNC.init()
 
         if not binlog.load():
             logger.debug(f"need full regeneration")

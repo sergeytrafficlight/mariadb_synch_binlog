@@ -97,7 +97,6 @@ class regeneration_threads_controller:
             self.max_id = 0
 
 
-
     def __init__(self, threads_count):
         self.tables = {}
         self.lock = threading.Lock()
@@ -163,8 +162,6 @@ class regeneration_threads_controller:
 
 
 
-
-
 class insert_item_row:
 
     def __init__(self, table_name: str, keys: [], values: []):
@@ -172,73 +169,27 @@ class insert_item_row:
         self.keys = keys
         self.values = values
 
-    def is_row(self):
-        return True
-
-    def is_xid(self):
-        return False
-
-
-class insert_item_xid:
-
-    def __init__(self, binlog):
-        self.binlog = binlog
-
-    def is_row(self):
-        return False
-
-    def is_xid(self):
-        return True
-
 
 class insert_buffer:
 
     def __init__(self, triggering_rows_count = 1_000):
 
         self.lock = threading.Lock()
-        self.triggering_rows_count = triggering_rows_count
         self.items = []
 
-    def push_xid_binlog(self, binlog):
-        with self.lock:
-            self.items.append(insert_item_xid(binlog))
-            return len(self.items) > self.triggering_rows_count
-
     def push(self, table, columns, data) -> bool:
-        #return triggered
-
         with self.lock:
             self.items.append(insert_item_row(table, columns, data))
-            return len(self.items) > self.triggering_rows_count
-
-    def overload(self):
-        with self.lock:
-            return len(self.items) > self.triggering_rows_count
-
-    def len(self):
-        with self.lock:
-            return len(self.items)
 
     def get_similar_pack_clear(self):
 
         with self.lock:
             if not len(self.items):
-                return {
-                    'rows': [],
-                    'xid_binlog': None,
-                }
+                return None
 
             pack = []
-            xid_binlog = None
-            xid_parsed_count = 0
 
             for i, item in enumerate(self.items):
-                if item.is_xid():
-                    xid_binlog = item.binlog
-                    xid_parsed_count += 1
-                    continue
-
-
                 if len(pack):
                     if pack[0].table_name != item.table_name:
                         break
@@ -252,12 +203,7 @@ class insert_buffer:
                 pack.append(item)
 
 
-            del self.items[:len(pack) + xid_parsed_count]
-
-            return {
-                'rows': pack,
-                'xid_binlog': xid_binlog,
-            }
+            return pack
 
 
 def get_health_answer(socket_path):
@@ -382,3 +328,10 @@ def preflight_check(MYSQL_SETTINGS, APP_SETTINGS):
     cursor = conn.cursor()
     preflight_check_ex(cursor, MYSQL_SETTINGS, APP_SETTINGS)
     conn.close()
+
+class process_event_result:
+
+    def __init__(self, table_name, columns, values):
+        self.table_name = table_name
+        self.columns = columns
+        self.values = values
