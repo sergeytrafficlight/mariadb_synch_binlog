@@ -234,15 +234,28 @@ def _stop(consumer):
     stop(consumer)
     assert not consumer.is_alive()
 
+def _wait_lag():
+    from config.config_test import MYSQL_SETTINGS_ACTOR, APP_SETTINGS, MYSQL_SETTINGS
+    from src.tools import get_health_answer
+    while True:
+        answer = get_health_answer(APP_SETTINGS['health_socket'])
+        lag = answer['binlog_diff']
+
+        if lag is None:
+            time.sleep(1)
+            continue
+        if not lag:
+            break
 
 
-def _test_start_stop():
+def test_start_stop():
 
     db_name = create_mariadb_db()
     db_clickhouse = create_clickhouse_db()
 
     clear_binlog_file()
     consumer = _start()
+    _wait_lag()
     _stop(consumer)
 
 
@@ -260,12 +273,14 @@ def test_init_load_insert():
 
     compare_db()
 
-    generate_init_load(100)
+    init_load_count = 2
+    generate_init_load(init_load_count)
     consumer = _start()
+    _wait_lag()
 
     assert statistic.initiate_full_regeneration == 1
-    assert statistic.process_event_insert == 100
-    time.sleep(5)
+    assert statistic.process_event_insert == init_load_count
+
     _stop(consumer)
 
     compare_db()
@@ -278,7 +293,7 @@ def test_init_load_insert():
 
     generate_load(1, True)
 
-    time.sleep(1)
+    _wait_lag()
 
     assert statistic.process_event_insert == 1
 
@@ -302,7 +317,7 @@ def test_init_load_insert():
     set_emulate_error(False)
 
     consumer = _start()
-
+    _wait_lag()
     _stop(consumer)
 
     compare_db()

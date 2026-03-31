@@ -281,11 +281,11 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
                         if STOP:
                             break
                         if isinstance(event, WriteRowsEvent):
-                            USER_FUNC.process_event('insert', event.schema, event.table, row['values'])
+                            SYNCH_STORAGE.put_event(event_type='insert', table=event.table, event=row['values'])
                         elif isinstance(event, UpdateRowsEvent):
-                            USER_FUNC.process_event('update', event.schema, event.table, row)
+                            SYNCH_STORAGE.put_event(event_type='update', table=event.table, event=row)
                         elif isinstance(event, DeleteRowsEvent):
-                            USER_FUNC.process_event('delete', event.schema, event.table, row)
+                            SYNCH_STORAGE.put_event(event_type='delete', table=event.table, event=row)
 
             time.sleep(0.2)
     except Exception as e:
@@ -421,13 +421,11 @@ def full_regeneration_thread(mysql_settings, app_settings):
 
 
 def full_regeneration(mysql_settings, app_settings):
-    global USER_FUNC, STAGE, PARSED_BINLOG_TOTAL, PARSED_BINLOG_MY
+    global USER_FUNC, STAGE, PARSED_BINLOG_TOTAL, PARSED_BINLOG_MY, SYNCH_STORAGE
     USER_FUNC.initiate_full_regeneration()
     STAGE = Stage.REGENERATION
 
     binlog = get_binlog_from_db(mysql_settings, app_settings)
-
-    #assert binlog.save()
 
     threads = []
 
@@ -443,7 +441,9 @@ def full_regeneration(mysql_settings, app_settings):
 
     PARSED_BINLOG_TOTAL = binlog.copy()
     PARSED_BINLOG_MY = binlog.copy()
-    save_binlog_position(binlog)
+
+    SYNCH_STORAGE.put_binlog(binlog)
+
     return binlog
 
 def worker_thread(buffer_data, insert_storage):
@@ -454,13 +454,15 @@ def worker_thread(buffer_data, insert_storage):
             return
         result = USER_FUNC.process_event(event.event_type, event.table, event.event)
 
-        insert_storage.push(result.table_name, result.columns, result.values)
+        for r in result:
+            insert_storage.push(r.table_name, r.columns, r.values)
 
 
 def run_workers_thread(app_settings):
 
     global STOP, SYNCH_STORAGE, STAGE, USER_FUNC
     timeout = app_settings['clickhouse_dropdown_sleep']
+
 
     while not STOP:
         time.sleep(timeout)
@@ -483,16 +485,27 @@ def run_workers_thread(app_settings):
 
         while True:
             rows = insert_storage.get_similar_pack_clear()
+            if rows is None:
+                break
 
             if len(rows):
-                columns = ','.join(rows[0].keys)
+                columns = rows[0].keys
                 values = [p.values for p in rows]
-                USER_FUNC.dump_values(rows[0].table_name, columns, values)
+                try:
+                    USER_FUNC.dump_values(rows[0].table_name, columns, values)
+                except Exception as e:
+                    logger.exception(e)
+                    #to notify all other threads to stop
+                    STOP = True
+                    SYNCH_STORAGE.get_buffer(expecting_binlog=sync_mode)
+                    return
             else:
                 break
 
         if sync_mode:
             assert buffer_data.binlog is not None, f"Binlog can't be None here"
+
+        if buffer_data.binlog:
             save_binlog_position(buffer_data.binlog)
 
 
@@ -504,12 +517,17 @@ def run(MYSQL_SETTINGS, APP_SETTINGS):
     SYNCH_STORAGE = synch_storage(max_len = APP_SETTINGS['clickhouse_max_batch_len'])
 
     health_thread = None
+    workers_thread = None
 
     try:
         conn = pymysql.connect(**MYSQL_SETTINGS)
         cursor = conn.cursor()
 
         preflight_check_ex(cursor, MYSQL_SETTINGS, APP_SETTINGS)
+
+        if conn:
+            conn.close()
+
 
         binlog = binlog_file(APP_SETTINGS['binlog_file'])
 
@@ -518,6 +536,9 @@ def run(MYSQL_SETTINGS, APP_SETTINGS):
 
         USER_FUNC.init()
 
+        workers_thread = threading.Thread(target=run_workers_thread, daemon=True, args=(APP_SETTINGS,))
+        workers_thread.start()
+
         if not binlog.load():
             logger.debug(f"need full regeneration")
             binlog = full_regeneration(MYSQL_SETTINGS, APP_SETTINGS)
@@ -525,8 +546,6 @@ def run(MYSQL_SETTINGS, APP_SETTINGS):
         else:
             logger.debug(f"regenereation is not need, start from {str(binlog)}")
 
-        if conn:
-            conn.close()
 
         start_binlog_consumer(MYSQL_SETTINGS, APP_SETTINGS, binlog)
 
@@ -537,9 +556,15 @@ def run(MYSQL_SETTINGS, APP_SETTINGS):
 
     finally:
         STOP = True
+        print(f"stopping")
         if health_thread:
+            print(f"health")
             health_thread.join()
+        if workers_thread:
+            print(f"workers")
+            workers_thread.join()
 
+        print(f"teardown")
         USER_FUNC.tear_down()
         return 0
 
@@ -547,3 +572,4 @@ def run(MYSQL_SETTINGS, APP_SETTINGS):
 def stop():
     global STOP
     STOP = True
+    print(f"STOP CONSUMER")

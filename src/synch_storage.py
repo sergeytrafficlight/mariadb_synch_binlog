@@ -141,8 +141,6 @@ class synch_storage:
         self.size = 0
 
     def put_event(self, event_type, table, event):
-
-        print(f"size: {self.size} max: {self.max_len}")
         with self.lock:
             while self.size >= self.max_len:
                 self.swap_condition.wait()

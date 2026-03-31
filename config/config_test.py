@@ -17,14 +17,14 @@ APP_SETTINGS = {
     'unique_consumer_server_id': 100001,
     #init table - this table will scan as initital creating data
     'init_tables': ['items', 'items2'],
-    'full_regeneration_threads_count': 20,
+    'full_regeneration_threads_count': 10,
     'full_regeneration_batch_len': 10,
     #sync next tables, while parsing binlog
     'scan_tables': ['items','items2'],
     'health_socket': './common/health.sock',
     'binlog_file': './common/binlog.pos',
     'handle_events_plugin': 'plugins_test.plugin_test',
-    'clickhouse_dropdown_sleep': 2,
-    'clickhouse_max_batch_len': 100,
+    'clickhouse_dropdown_sleep': 10,
+    'clickhouse_max_batch_len': 1000,
 
 }

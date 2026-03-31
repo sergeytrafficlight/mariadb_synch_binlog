@@ -81,6 +81,7 @@ class plugin_wrapper:
         self.initiate_synch_mode = getattr(module, 'initiate_synch_mode')
         self.tear_down = getattr(module, 'tear_down')
         self.process_event = getattr(module, 'process_event')
+        self.dump_values = getattr(module, 'dump_values')
 
 
 class regeneration_threads_controller:
@@ -201,7 +202,7 @@ class insert_buffer:
                         )
                 pack.append(item)
 
-
+            del self.items[:len(pack)]
             return pack
 
 

@@ -28,6 +28,7 @@ if not logger.handlers:
 class statistic_class:
 
     def __init__(self):
+        self.lock = threading.Lock()
         self.init = 0
         self.initiate_full_regeneration = 0
         self.finished_full_regeneration = 0
@@ -37,15 +38,17 @@ class statistic_class:
         self.process_event_update = 0
         self.process_event_delete = 0
 
+
     def clear(self):
-        self.init = 0
-        self.initiate_full_regeneration = 0
-        self.finished_full_regeneration = 0
-        self.initiate_synch_mode = 0
-        self.tear_down = 0
-        self.process_event_insert = 0
-        self.process_event_update = 0
-        self.process_event_delete = 0
+        with self.lock:
+            self.init = 0
+            self.initiate_full_regeneration = 0
+            self.finished_full_regeneration = 0
+            self.initiate_synch_mode = 0
+            self.tear_down = 0
+            self.process_event_insert = 0
+            self.process_event_update = 0
+            self.process_event_delete = 0
 
 
 statistic = statistic_class()
@@ -69,11 +72,13 @@ def dump_values(table_name, columns, values):
 
 
     if not emulate_error:
+
         client.insert(
             table=table_name,
             column_names=columns,
             data=values
         )
+
     else:
         client.close()
         logger.debug("Emulate error")
@@ -139,29 +144,32 @@ def tear_down():
     logger.debug("DEINIT")
 
 
-def process_event(event_type, schema, table, event):
+def process_event(event_type, table, event):
     from src.tools import process_event_result
     global version
     if table != 'items':
-        return
+        return []
 
 
     #ch_connector = clickhouse_connectors.get_connector()
 
     if event_type == 'insert':
-        logger.debug(f"insert event {schema}.{table} event: {event}")
-        statistic.process_event_insert +=1
+        logger.debug(f"insert event {table} event: {event}")
+
+        with statistic.lock:
+            statistic.process_event_insert +=1
 
         event['version'] = version.get_version()
 
         columns = list(event.keys())
         values = [event[col] for col in columns]
 
-        return process_event_result(table_name=table, columns=columns, values=values)
+        return [process_event_result(table_name=table, columns=columns, values=values)]
 
     elif event_type == 'update':
-        statistic.process_event_update += 1
-        logger.debug(f"update event {schema}.{table} event: {event}")
+        with statistic.lock:
+            statistic.process_event_update += 1
+        logger.debug(f"update event {table} event: {event}")
 
         after = event['after_values']
         after['version'] = version.get_version()
@@ -169,11 +177,12 @@ def process_event(event_type, schema, table, event):
         columns = list(after.keys())
         values = [ after[col] for col in columns ]
 
-        return process_event_result(table_name=table, columns=columns, values=values)
+        return [process_event_result(table_name=table, columns=columns, values=values)]
 
     elif event_type == 'delete':
-        statistic.process_event_delete += 1
-        logger.debug(f"delete event {schema}.{table} event: {event}")
+        with statistic.lock:
+            statistic.process_event_delete += 1
+        logger.debug(f"delete event {table} event: {event}")
         deleted_record = event['values']
         deleted_record['deleted'] = 1
         deleted_record['version'] = version.get_version()
@@ -181,7 +190,7 @@ def process_event(event_type, schema, table, event):
         columns = list(deleted_record.keys())
         values = [deleted_record[col] for col in columns]
 
-        return process_event_result(table_name=table, columns=columns, values=values)
+        return [process_event_result(table_name=table, columns=columns, values=values)]
 
     else:
         raise RuntimeError(f"Unknown event type '{event_type}'")
