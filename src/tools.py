@@ -112,6 +112,7 @@ class regeneration_threads_controller:
         self.lock = threading.Lock()
         self.barrier = threading.Barrier(threads_count)
         self.start_at = None
+        self.rows_parsed = 0
 
     def get_and_update_id(self, table, count):
         result = None
@@ -124,9 +125,9 @@ class regeneration_threads_controller:
 
         return result
 
-    def add_parsed_count(self, table, count):
+    def add_parsed_count(self, count):
         with self.lock:
-            self.tables[table].rows_parsed += count
+            self.rows_parsed += count
 
     def is_end(self, table):
         with self.lock:
@@ -153,20 +154,18 @@ class regeneration_threads_controller:
     def statistic(self):
         with self.lock:
             total = 0
-            parsed = 0
 
             for k, v in self.tables.items():
                 total += v.rows_count
-                parsed += v.rows_parsed
 
-            if self.start_at and parsed < total and parsed:
+            if self.start_at and self.rows_parsed < total and self.rows_parsed:
                 time_diff = time.time() - self.start_at
-                time_per_one = float(time_diff) / parsed
-                estimate = (total - parsed) * time_per_one
+                time_per_one = float(time_diff) / self.rows_parsed
+                estimate = (total - self.rows_parsed) * time_per_one
             else:
                 estimate = None
 
-            return (total, parsed, estimate)
+            return (total, self.rows_parsed, estimate)
 
 
     def is_total_parsed(self):

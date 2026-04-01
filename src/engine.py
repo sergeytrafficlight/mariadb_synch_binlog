@@ -515,7 +515,7 @@ def run_workers_thread(app_settings):
                     USER_FUNC.dump_values(rows[0].table_name, columns, values)
                     print(f"stage: {STAGE} table: {rows[0].table_name} len: {len(values)}")
                     if STAGE in [Stage.REGENERATION, Stage.REGENERATION_PARSED_DONE]:
-                        REGENERATION_CONTROLLER.add_parsed_count(rows[0].table_name, len(values))
+                        REGENERATION_CONTROLLER.add_parsed_count(len(values))
                 except Exception as e:
                     logger.exception(e)
                     #to notify all other threads to stop
