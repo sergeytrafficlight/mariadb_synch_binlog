@@ -136,6 +136,9 @@ def initiate_synch_mode():
 
     client.close()
 
+def initiate_dropdown_workers():
+    pass
+
 def tear_down():
     #print('tear_down')
     global statistic

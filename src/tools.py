@@ -75,12 +75,22 @@ class plugin_wrapper:
 
         module = importlib.import_module(module_path)
 
+        #инициалзация общего модуля, вызывается 1 раз при старте
         self.init = getattr(module, 'init')
+        # инициалзация процесса полной регенерации данных, вызывает я 1 раз, перед началом выборки данных из БД
         self.initiate_full_regeneration = getattr(module, 'initiate_full_regeneration')
+        # завершение процесса регенерации
         self.finished_full_regeneration = getattr(module, 'finished_full_regeneration')
+        # инициалзация процесса чтения binlog-а и синхронизации в real-time, вызывается 1 раз
         self.initiate_synch_mode = getattr(module, 'initiate_synch_mode')
+        # вызывается перед запуском воркеров, которые должна обработать через process_event, все считанные данные,
+        # вызывается всегда в одном потоке, и гарантированно изолированно от process_event
+        self.initiate_dropdown_workers = getattr(module, 'initiate_dropdown_workers')
+        # завершение работы модуля
         self.tear_down = getattr(module, 'tear_down')
+        # вызывается в мультипоточном режиме, для обработки накопленных данных
         self.process_event = getattr(module, 'process_event')
+        # вызывается после завершения работы всех воркеров, в рамках собранного пакета данных, для сброса данных в хранилище
         self.dump_values = getattr(module, 'dump_values')
 
 
