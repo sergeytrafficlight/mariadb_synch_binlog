@@ -452,7 +452,10 @@ def worker_thread(buffer_data, insert_storage):
         event = buffer_data.get_event()
         if event is None:
             return
+
         result = USER_FUNC.process_event(event.event_type, event.table, event.event)
+
+        assert result is not None, f"Unexpected None for result"
 
         for r in result:
             insert_storage.push(r.table_name, r.columns, r.values)
