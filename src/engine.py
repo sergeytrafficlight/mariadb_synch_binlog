@@ -21,7 +21,7 @@ from .synch_storage import synch_storage
 logging.getLogger("pymysqlreplication").setLevel(logging.ERROR)
 
 logger = logging.getLogger(__name__)
-#logger.setLevel(logging.INFO)
+logger.setLevel(logging.INFO)
 
 if not logger.handlers:
     console_handler = logging.StreamHandler()
@@ -267,8 +267,6 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
                     binlog.pos = event.packet.log_pos
                     binlog.file = binlog_stream.log_file
                     PARSED_BINLOG_TOTAL = binlog.copy()
-                    logger.debug(f'got xidevent {binlog}')
-                    #print(f"got xid: {binlog}")
                     SYNCH_STORAGE.put_binlog(binlog.copy())
 
                 elif event.schema != app_settings['db_name']:
@@ -289,9 +287,7 @@ def start_binlog_consumer(mysql_settings, app_settings, binlog):
 
             time.sleep(0.2)
     except Exception as e:
-        logger.critical(f"Consumer exception: {e}")
         logger.exception(f"Consumer exception: {e}")
-        #logger.traceback(f"Consumer exception: {e}")
     finally:
         binlog_stream.close()
         return
@@ -467,9 +463,12 @@ def run_workers_thread(app_settings):
     timeout = app_settings['clickhouse_dropdown_sleep']
 
 
+    logger.info(f"workers threads")
+
     while not STOP:
         time.sleep(timeout)
         sync_mode = (STAGE == Stage.SYNCH)
+        logger.info(f"run threads, sync mode: {sync_mode}")
 
         buffer_data = SYNCH_STORAGE.get_buffer(expecting_binlog=sync_mode)
         if buffer_data is None:
@@ -479,6 +478,10 @@ def run_workers_thread(app_settings):
 
         USER_FUNC.initiate_dropdown_workers()
 
+
+
+        logger.info(f"launch worker threads")
+
         threads = []
         for i in range(app_settings['full_regeneration_threads_count']):
             t = threading.Thread(target=worker_thread, args=(buffer_data, insert_storage))
@@ -487,6 +490,7 @@ def run_workers_thread(app_settings):
 
         for t in threads:
             t.join()
+        logger.info(f"workers done")
 
         while True:
             rows = insert_storage.get_similar_pack_clear()
