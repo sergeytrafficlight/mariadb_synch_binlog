@@ -474,6 +474,8 @@ def run_workers_thread(app_settings):
 
         insert_storage = insert_buffer()
 
+        USER_FUNC.initiate_dropdown_workers()
+
         threads = []
         for i in range(app_settings['full_regeneration_threads_count']):
             t = threading.Thread(target=worker_thread, args=(buffer_data, insert_storage))
