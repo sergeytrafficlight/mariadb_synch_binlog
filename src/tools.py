@@ -150,8 +150,6 @@ class regeneration_threads_controller:
             if max_id > self.tables[table].max_id:
                 self.tables[table].max_id = max_id
 
-
-
     def statistic(self):
         with self.lock:
             total = 0
@@ -169,6 +167,11 @@ class regeneration_threads_controller:
                 estimate = None
 
             return (total, parsed, estimate)
+
+
+    def is_total_parsed(self):
+        total, parsed, _ = self.statistic()
+        return total == parsed
 
 
 

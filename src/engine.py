@@ -21,7 +21,7 @@ from .synch_storage import synch_storage
 logging.getLogger("pymysqlreplication").setLevel(logging.ERROR)
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+#logger.setLevel(logging.INFO)
 
 if not logger.handlers:
     console_handler = logging.StreamHandler()
@@ -48,6 +48,8 @@ threading.excepthook = thread_exception_handler
 class Stage(Enum):
     INIT = 'INIT'
     REGENERATION = 'REGENERATION'
+    REGENERATION_PARSED_DONE = 'REGENERATION_PARSED_DONE'
+    REGENERATION_DUMP_DONE = 'REGENERATION_DUMP_DONE'
     SYNCH = 'SYNCH'
 
 USER_FUNC = None
@@ -360,7 +362,7 @@ def health_server(socket_path, mysql_settings, app_settings):
 
 
 def full_regeneration_thread(mysql_settings, app_settings):
-    global USER_FUNC, REGENERATION_CONTROLLER, SYNCH_STORAGE
+    global USER_FUNC, REGENERATION_CONTROLLER, SYNCH_STORAGE, STAGE
 
     db_name = app_settings['db_name']
     tables_name = app_settings['init_tables']
@@ -385,7 +387,8 @@ def full_regeneration_thread(mysql_settings, app_settings):
         max_id = r[0]['max_id']
         logger.debug(f"{q} count: {count} min_id: {min_id} max_id: {max_id}")
 
-
+        if STAGE == Stage.INIT:
+            STAGE = Stage.REGENERATION
         REGENERATION_CONTROLLER.put_rows_count(table, count, min_id, max_id)
 
     REGENERATION_CONTROLLER.barrier.wait()
@@ -410,16 +413,13 @@ def full_regeneration_thread(mysql_settings, app_settings):
                 #USER_FUNC.process_event('insert', db_name, table, r)
                 SYNCH_STORAGE.put_event(event_type='insert', table=table, event=r)
 
-            REGENERATION_CONTROLLER.add_parsed_count(table, count)
-
     conn.close()
 
 
 
 def full_regeneration(mysql_settings, app_settings):
-    global USER_FUNC, STAGE, PARSED_BINLOG_TOTAL, PARSED_BINLOG_MY, SYNCH_STORAGE
+    global USER_FUNC, STAGE, PARSED_BINLOG_TOTAL, PARSED_BINLOG_MY, SYNCH_STORAGE, STOP, REGENERATION_CONTROLLER
     USER_FUNC.initiate_full_regeneration()
-    STAGE = Stage.REGENERATION
 
     binlog = get_binlog_from_db(mysql_settings, app_settings)
 
@@ -433,12 +433,18 @@ def full_regeneration(mysql_settings, app_settings):
     for t in threads:
         t.join()
 
+    STAGE = Stage.REGENERATION_PARSED_DONE
+    # waiting for stop full regeneration
+
+    while not STOP and STAGE != Stage.REGENERATION_DUMP_DONE:
+        time.sleep(1)
+
     USER_FUNC.finished_full_regeneration()
 
     PARSED_BINLOG_TOTAL = binlog.copy()
     PARSED_BINLOG_MY = binlog.copy()
 
-    SYNCH_STORAGE.put_binlog(binlog)
+    save_binlog_position(binlog)
 
     return binlog
 
@@ -474,11 +480,14 @@ def run_workers_thread(app_settings):
         if buffer_data is None:
             continue
 
+        if not buffer_data.len():
+            if STAGE == Stage.REGENERATION_PARSED_DONE:
+                STAGE = Stage.REGENERATION_DUMP_DONE
+            continue
+
         insert_storage = insert_buffer()
 
         USER_FUNC.initiate_dropdown_workers()
-
-
 
         logger.info(f"launch worker threads")
 
@@ -490,6 +499,7 @@ def run_workers_thread(app_settings):
 
         for t in threads:
             t.join()
+
         logger.info(f"workers done")
 
         while True:
@@ -502,6 +512,8 @@ def run_workers_thread(app_settings):
                 values = [p.values for p in rows]
                 try:
                     USER_FUNC.dump_values(rows[0].table_name, columns, values)
+                    if STAGE == Stage.REGENERATION:
+                        REGENERATION_CONTROLLER.add_parsed_count(rows[0].table_name, len(values))
                 except Exception as e:
                     logger.exception(e)
                     #to notify all other threads to stop
