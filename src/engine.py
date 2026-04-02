@@ -21,7 +21,7 @@ from .synch_storage import synch_storage
 logging.getLogger("pymysqlreplication").setLevel(logging.ERROR)
 
 logger = logging.getLogger(__name__)
-#logger.setLevel(logging.INFO)
+logger.setLevel(logging.CRITICAL)
 
 if not logger.handlers:
     console_handler = logging.StreamHandler()
@@ -92,8 +92,7 @@ FORBIDDEN = {
 }
 
 def save_binlog_position(binlog):
-    logger.debug(f"save binlog {binlog}")
-    #print(f"save binlog {binlog}")
+    logger.info(f"save binlog {binlog}")
     if binlog:
         assert binlog.save()
 
@@ -478,11 +477,16 @@ def run_workers_thread(app_settings):
 
         buffer_data = SYNCH_STORAGE.get_buffer(expecting_binlog=sync_mode)
         if buffer_data is None:
+            logger.info(f"buffer data is empty")
             continue
 
         if not buffer_data.len():
             if STAGE == Stage.REGENERATION_PARSED_DONE:
                 STAGE = Stage.REGENERATION_DUMP_DONE
+
+            if buffer_data.binlog:
+                save_binlog_position(buffer_data.binlog)
+            logger.info(f'skip due stage: {STAGE}')
             continue
 
         insert_storage = insert_buffer()
@@ -506,6 +510,7 @@ def run_workers_thread(app_settings):
         while True:
             rows = insert_storage.get_similar_pack_clear()
             if rows is None:
+                logger.info("rows len is None")
                 break
 
             if len(rows):
@@ -523,7 +528,7 @@ def run_workers_thread(app_settings):
                     SYNCH_STORAGE.get_buffer(expecting_binlog=sync_mode)
                     return
             else:
-                break
+                pass
 
         if sync_mode:
             assert buffer_data.binlog is not None, f"Binlog can't be None here"
